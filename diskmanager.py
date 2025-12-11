@@ -18,11 +18,13 @@ class DiskManager:
             content = f.read(page_info.page_size)
         # content = content.decode('utf-8')
         rows = content.split('\n')
+        if rows[-1] == '':  # in linux final line is read as an empty string
+            rows = rows[:-1]
         row_collection: List[Row] = []
         for row in rows:
             str_values = row.split(',')
             if len(str_values) != len(page_info.table_info.column_names):
-                raise ValueError("Row does not match table schema")
+                raise ValueError(f"Row has {len(str_values)} columns and does not match table schema with {len(page_info.table_info.column_names)} columns")
             row = Row([dt(v) for v, dt in zip(str_values, page_info.table_info.column_datatypes)])
                 # Convert values to the appropriate datatype
                 # row.append(dt(v))

@@ -1,4 +1,8 @@
 from enum import StrEnum
+from queryplanner import QueryPlanner
+from catalog import Catalog
+from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause
+import re
 
 class qtype(StrEnum):
     SELECT = 'SELECT'
@@ -9,10 +13,26 @@ class qtype(StrEnum):
 class qtrans(StrEnum):
     WHERE = 'WHERE'
     ORDER = 'ORDER'
-    GROUP = 'DELETE'
+    GROUP = 'GROUP'
+    BY = 'BY'
     LIMIT = 'LIMIT'
+    AND = 'AND'
+    OR = 'OR'
+    COUNT = 'COUNT'
+    MIN = 'MIN'
+    MAX = 'MAX'
+    AVG = 'AVG'
+
 
 class qoperators(StrEnum):
+    ADD = '+'
+    SUB = '-'
+    DIV = '/'
+    PRD = '*'
+    OB = '('
+    CB = ')'
+
+class qcomparisonoperators(StrEnum):
     EQ = '='
     NEQ = '!='
     LT = '<'
@@ -20,143 +40,350 @@ class qoperators(StrEnum):
     LE = '<='
     GE = '>='
 
-def peek_tokenizer(user_input):
-    """Non tested"""
-    keywords = qtype.__members__.values() + qtrans.__members__.values() + qoperators.__members__.values()
-    token = ''
+
+class qseparators(StrEnum):
+    SEMICOLON = ';'
+    COMMA = ','
+    # DOT = '.'
+    WHITESPACE = ' '
+
+
+token_separators = [e.value for e in qoperators] + [e.value for e in qseparators] + [e.value for e in qcomparisonoperators]
+keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
+
+def tokenize(query: str) -> list[str]:
+    """The goal is to split the function by whitespace, comma, dot and semicolon."""
+
+    token_separators.sort(key=lambda s: len(s), reverse=True)
+
     tokens = []
-    while len(user_input) > 0:
-        user_input = user_input.strip()
-        for k in keywords:
-            if user_input[0:len(k)] == k:
+    char_index = 0
+    prev_char_index = char_index
+    while char_index < len(query):
+        if query[char_index] == r"'":
+            # literal detection# Look for the closing quote
+            start_quote_index = char_index
+            char_index += 1
+            while char_index < len(query) and not (query[char_index] == "'" and query[char_index-1] != "\\"):  # escape ' is handled this way. -1 is safe because the cursor has advanced by one in prev line
+                char_index += 1
+            if char_index == len(query):
+                raise SyntaxError("Unclosed string literal in query.")
+
+            literal_token = query[start_quote_index : char_index + 1]
+            tokens.append(literal_token)
+            
+            char_index += 1 # Move past the closing quote
+            prev_char_index = char_index
+            continue
+
+        for k in token_separators:
+            if len(query) >= char_index+len(k) and query[char_index:char_index+len(k)] == k:
+                token = query[prev_char_index:char_index]
                 if token != '':
                     tokens.append(token)
-                    token = ''
                 tokens.append(k)
-                user_input = user_input[len(k):]
+                char_index += len(k)
+                prev_char_index = char_index
                 break
         else:
-            token += user_input[0]
-            user_input = user_input[1:]
-        
-        
+            char_index += 1
+    if query[prev_char_index:char_index] != '':
+        tokens.append(query[prev_char_index:char_index])
+    return tokens
+       
 
+class TokenStream:
+    def __init__(self, tokens):
+        # Filter out WHITESPACE tokens and make keywords uppercase
+        self.tokens = [
+            t.upper() if t.upper() in keywords_set else t
+            for t in tokens if t != qseparators.WHITESPACE
+        ]
+        self.pos = 0
 
-def tonkenizer(user_input):
-    user_input = user_input.strip()
-    if user_input == '':
-        return []
-    queries = [q for q in user_input.split(';') if q != '']  # if ; is at the beginning or end of the string the split command returns an empty string
-    if len(queries)>1:
-        raise NotImplementedError("insert only one query")
-    query = queries[0]
+    def current(self):
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return None
 
-    """Split by whitepace, but keep string literals intact. Use a stack to track the quotes."""
+    def advance(self):
+        self.pos += 1
+
+    def match(self, expected_token):
+        """Matches the current token against an expected token and advances."""
+        token = self.current()
+        if token == expected_token:
+            self.advance()
+            return token
+        raise SyntaxError(f"Expected '{expected_token}', got '{token}' at token position {self.pos}")
     
-    quote_stack = []
-    splits = []
-    part = ''
-    for char in query:
-        if char in (' ', '>', '<', '!') and len(quote_stack) == 0:
-            if part != '':
-                splits.append(part)
-            part = ''
-            if char in ('>', '<', '!'):
-                part += char
-        elif char == '=' and len(quote_stack) == 0:
-            part += char
-            splits.append(part)
-            part = ''
-        elif char != ' ' or len(quote_stack) > 0:
-            part += char
+    def peek(self, offset=1):
+        """Looks ahead without advancing."""
+        if self.pos + offset < len(self.tokens):
+            return self.tokens[self.pos + offset]
+        return None
 
-        if char == "'" and len(quote_stack)==0:
-            """Start of a string literal"""
-            quote_stack.append(char)
-        elif char == "'" and len(quote_stack)>0:
-            """End of a string literal"""
-            quote_stack.pop()
-    splits.append(part)  # append the last part after the loop ends
 
-    return splits 
+class Parser:
+    
+    def __init__(self, ts: TokenStream):
+        self.stream = ts
 
-def parser(tokens):
-    result = {}
-    type_token = tokens.pop(0).upper()
-    if type_token not in qtype.__members__:
-        raise Exception("No valid type")
-    query_type = qtype[type_token]
-    if query_type == qtype.INSERT:
-        into_maybe = tokens.pop(0)
-        if into_maybe != 'INTO':
-            raise Exception("Expect into after insert")
-    elif query_type == qtype.CREATE:
-        raise NotImplementedError("CREATE not implemented")
-    elif query_type == qtype.DELETE:
-        raise NotImplementedError("DELETE not implemented")
-    elif query_type == qtype.SELECT:
-        result['type'] = query_type
-        column_selection = []
-        column = tokens.pop(0)
-        while column.upper() != 'FROM':
-            column_selection += [c for c in column.split(',') if c != '']  # if ; is at the beginning or end of the string the split command returns an empty string
-            column = tokens.pop(0)
-        result['columns'] = column_selection
+    def parse(self):
+        """Entry point: Parses a single SQL statement."""
         
-        table_selection = tokens.pop(0)
-        result['table'] = table_selection
+        current_token = self.stream.current()
 
-        if len(tokens) == 0:
-            return result
-        transformation_token = tokens.pop(0)
-        if transformation_token not in qtrans.__members__:
-            raise Exception("No valid trans")
-        query_transformation = qtrans[transformation_token]
-        if query_transformation == qtrans.WHERE:
-            where = {}
-            token = tokens.pop(0)
-            if token.isdigit() or token[0]==token[-1]=="'":  # literal value, e.g., '1' or 1
-                if token.isdigit():
-                    slot1 = {"type": "value", "value": int(token)}
-                else:
-                    slot1 = {"type": "value", "value": token.strip("'")}
+        if current_token == qtype.SELECT:
+            return self._parse_select_statement()
+        # Add elif for CREATE, INSERT, DELETE here later
+        
+        raise SyntaxError(f"Unsupported query type: {current_token}")
+
+
+    def _parse_select_statement(self):
+        """
+        Parses: SELECT ... FROM ... [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+        """
+        
+        self.stream.match(qtype.SELECT)
+        columns = self._parse_column_list()
+        
+        # ... (Parsing FROM and WHERE remains the same) ...
+        if self.stream.current() == 'FROM':
+            self.stream.match('FROM')
+            table_name = self._parse_identifier()
+        else:
+            raise SyntaxError("Expected 'FROM'.")
+        
+        where_clause = None
+        if self.stream.current() == qtrans.WHERE:
+            self.stream.match(qtrans.WHERE)
+            where_clause = self._parse_logical_expression()
+            
+        # 1. Parse optional GROUP BY clause (NEW LOGIC)
+        group_by_clause = None
+        if self.stream.current() == qtrans.GROUP:
+            self.stream.match(qtrans.GROUP)
+            self.stream.match(qtrans.BY)
+            group_by_clause = self._parse_group_by()
+            
+        # 2. Parse optional ORDER BY clause (Existing Logic)
+        order_by_clause = None
+        if self.stream.current() == qtrans.ORDER:
+            self.stream.match(qtrans.ORDER)
+            self.stream.match(qtrans.BY)
+            order_by_clause = self._parse_order_by()
+            
+        # 3. Parse optional LIMIT clause (Existing Logic)
+        limit_clause = None
+        if self.stream.current() == qtrans.LIMIT:
+            self.stream.match(qtrans.LIMIT)
+            limit_clause = self._parse_limit()
+            
+        self.stream.match(qseparators.SEMICOLON)
+        
+        return SelectStatement(columns, table_name, where_clause, 
+                               group_by_clause=group_by_clause, # Added to SelectStatement
+                               order_by_clause=order_by_clause, 
+                               limit_clause=limit_clause)
+        
+    def _parse_group_by(self):
+        """Parses: col1, col2, ..."""
+        group_columns = []
+        while True:
+            # Grouping columns must be simple ColumnRef nodes
+            col_ref = ColumnRef(name=self._parse_identifier())
+            group_columns.append(col_ref)
+            
+            if self.stream.current() == qseparators.COMMA:
+                self.stream.match(qseparators.COMMA)
             else:
-                # token is colun name
-                slot1 = {"type": "column", "value": token}
+                break
+                
+        return GroupByClause(group_columns)       
+    def _parse_order_by(self):
+        """Parses: col1 [ASC|DESC], col2 [ASC|DESC], ..."""
+        sort_items = []
+        while True:
+            # Column name reference
+            col_ref = self._parse_column_or_aggregate()
             
-            where['slot1'] = slot1
-
-            token = tokens.pop(0)
-            if token not in [q.value for q in qoperators]:
-                raise Exception("Expect operator like = or !=")
-            where['operator'] = token
+            # Check for optional direction (ASC/DESC)
+            direction = 'ASC'
+            current = self.stream.current()
+            if current in ['ASC', 'DESC']:
+                direction = self.stream.match(current)
+                
+            sort_items.append(SortItem(col_ref, direction))
             
-            token = tokens.pop(0)
-            if token.isdigit() or token[0]==token[-1]=="'":  # literal value, e.g., '1' or 1
-                if token.isdigit():
-                    slot2 = {"type": "value", "value": int(token)}
-                else:
-                    slot2 = {"type": "value", "value": token.strip("'")}
+            # Look for subsequent columns separated by commas
+            if self.stream.current() == qseparators.COMMA:
+                self.stream.match(qseparators.COMMA)
             else:
-                # token is colun name
-                slot2 = {"type": "column", "value": token}
+                break
+                
+        return OrderByClause(sort_items)
+        
+    def _parse_limit(self):
+        """Parses: integer_literal"""
+        # The LIMIT value must be a literal (number)
+        limit_operand = self._parse_operand()
+        
+        if not isinstance(limit_operand, Literal):
+             raise SyntaxError("LIMIT must be followed by a numeric literal.")
+                
+        return LimitClause(limit_operand.value)    
+    def _parse_column_list(self):
+        """
+        Parses: * | column_ref | aggregate_call ( , ... )*
+        """
+        columns = []
+        
+        # Check for SELECT *
+        if self.stream.current() == '*':
+            columns.append(ColumnRef(name='*'))
+            self.stream.advance()
+        else:
+            # Parse one or more columns/aggregates separated by commas
+            while True:
+                columns.append(self._parse_column_or_aggregate())
+                
+                if self.stream.current() == qseparators.COMMA:
+                    self.stream.match(qseparators.COMMA)
+                else:
+                    break
+                    
+        return columns
+
+    
+    def _parse_column_or_aggregate(self):
+        """
+        Parses a single column or aggregate function call.
+        (e.g., id, name, COUNT(*), MAX(price))
+        """
+        
+        current = self.stream.current()
+        
+        # Check for aggregate functions
+        if current in ['COUNT', 'MIN', 'MAX', 'AVG']:
+            function_name = self.stream.match(current)
+            self.stream.match('(')
             
-            where['slot2'] = slot2
+            # Check for COUNT(*)
+            if self.stream.current() == '*':
+                argument = self.stream.match('*')
+            else:
+                argument = self._parse_identifier() # Column inside the aggregate
+            
+            self.stream.match(')')
+            return AggregateCall(function_name, argument=argument)
+            
+        # Otherwise, it's a simple column reference (identifier)
+        return ColumnRef(name=self._parse_identifier())
 
-            result['where'] = where
+    
+    def _parse_identifier(self):
+        """Helper to parse a table name or column name."""
+        # Simple rule: an identifier is any token that is not a reserved keyword or separator/operator
+        token = self.stream.current()
+        # In a full parser, you'd check if 'token' is a keyword, but for this simple version, 
+        # we'll assume the token is a valid identifier.
+        if token is None:
+            raise SyntaxError("Expected an identifier, got end of stream.")
+        
+        self.stream.advance()
+        return token
 
 
-            # token = tokens.pop(0)
-            # stmt = ''
-            # while len(tokens)!=0 and tokens[0] not in qtrans.__members__:
-            #     stmt += token + ' '
-            #     token = tokens.pop(0)
-            # stmt += token
-            # result['where'] = stmt
-        elif query_transformation == qtrans.ORDER:
-            raise NotImplementedError("ORDER not implemented")
-        elif query_transformation == qtrans.GROUP:
-            raise NotImplementedError("GROUP not implemented")
-        elif query_transformation == qtrans.LIMIT:
-            raise NotImplementedError("LIMIT not implemented")
-    return result
+    # --- Recursive Descent for WHERE Clause Logic ---
+    # Following the precedence rule (AND > OR)
+
+    def _parse_logical_expression(self):
+        """
+        Handles OR conditions (Lowest Precedence).
+        <LogicalExpression> -> <AndExpression> ( OR <AndExpression> )*
+        """
+        left_node = self._parse_and_expression()
+
+        while self.stream.current() == qtrans.OR:
+            op = self.stream.match(qtrans.OR)
+            right_node = self._parse_and_expression()
+            left_node = LogicalExpression(op, left_node, right_node)
+            
+        return left_node
+
+    def _parse_and_expression(self):
+        """
+        Handles AND conditions (Higher Precedence).
+        <AndExpression> -> <Comparison> ( AND <Comparison> )*
+        """
+        left_node = self._parse_comparison()
+
+        while self.stream.current() == qtrans.AND:
+            op = self.stream.match(qtrans.AND)
+            right_node = self._parse_comparison()
+            left_node = LogicalExpression(op, left_node, right_node)
+            
+        return left_node
+
+    def _parse_comparison(self):
+        """
+        Handles simple comparisons or parenthesized expressions.
+        <Comparison> -> <Operand> <Operator> <Operand> | ( <LogicalExpression> )
+        """
+        
+        current = self.stream.current()
+        
+        if current == '(':
+            self.stream.match('(')
+            node = self._parse_logical_expression() # Recurse back to the highest precedence
+            self.stream.match(')')
+            return node
+        
+        left_operand = self._parse_operand()
+        
+        # Check for comparison operator
+        comparison_op = self.stream.current()
+        if comparison_op in [e.value for e in qcomparisonoperators]:
+            self.stream.advance()
+            right_operand = self._parse_operand()
+            return Comparison(comparison_op, left_operand, right_operand)
+
+        # If it wasn't a comparison and not parentheses, it's an error
+        raise SyntaxError(f"Expected comparison operator or '(' at: {current}")
+
+
+    def _parse_operand(self):
+        """
+        Parses a single operand: ColumnRef or Literal value.
+        """
+        token = self.stream.current()
+
+        if token is None:
+            raise SyntaxError("Expected an operand, got end of stream.")
+
+        # 1. String Literal Check (The fix from last time, now robust!)
+        if token.startswith("'") and token.endswith("'"):
+            self.stream.advance()
+            # Pass the stripped value as a Literal
+            return Literal(token.strip("'").replace(r"\'", "'") )
+
+        if token.isdigit():
+            self.stream.advance()
+            return Literal(int(token))
+
+        if re.match(r'\d*[.]\d+', token):
+            # Simple conversion to Literal node
+            self.stream.advance()
+            # Try to cast to integer or float
+            return Literal(float(token))
+        
+        # Otherwise, assume it's a Column Reference (identifier)
+        return ColumnRef(name=self._parse_identifier())
+
+
+
+if __name__ == "__main__":
+    pass
+
