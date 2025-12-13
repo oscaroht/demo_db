@@ -1,6 +1,4 @@
 from enum import StrEnum
-from queryplanner import QueryPlanner
-from catalog import Catalog
 from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause
 import re
 

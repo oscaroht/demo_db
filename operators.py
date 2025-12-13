@@ -1,5 +1,4 @@
 
-# Comparison functions (gt, eq, etc.) as defined in your initial prompt
 operators = {
     '=': lambda x, y: x == y,
     '!=': lambda x, y: x != y,
@@ -95,8 +94,9 @@ class LogicalFilter:
         return '\n'.join(output)
 
 class Projection:
-    def __init__(self, column_indices, parent):
+    def __init__(self, column_indices, column_names, parent):
         self.column_indices = column_indices # List of indices to keep
+        self.column_names = column_names
         self.parent = parent
 
     def next(self):
@@ -168,54 +168,209 @@ class Limit:
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
-AGG_FUNCTIONS = {
-    'COUNT': lambda values: len(values),
-    'MIN': lambda values: min(values) if values else None,
-    'MAX': lambda values: max(values) if values else None,
-    'AVG': lambda values: sum(values) / len(values) if values else None,
+#
+# # Performance of this Aggregate will be horible for mem performance.
+# # This is a DBMS, we cannot put the entire table in mem.
+# AGG_FUNCTIONS = {
+#     'COUNT': lambda values: len(values),
+#     'MIN': lambda values: min(values) if values else None,
+#     'MAX': lambda values: max(values) if values else None,
+#     'AVG': lambda values: sum(values) / len(values) if values else None,
+# }
+#
+# class Aggregate:
+#     def __init__(self, group_key_indices, aggregate_specs, parent):
+#         self.group_key_indices = group_key_indices  # [index1, index2, ...]
+#         self.aggregate_specs = aggregate_specs      # [(func_name, arg_index), ...]
+#         self.parent = parent
+#
+#     def next(self):
+#         grouped_data = {}
+#
+#         for row in self.parent.next():
+#             group_key = tuple(row[i] for i in self.group_key_indices)
+#
+#             if group_key not in grouped_data:
+#                 grouped_data[group_key] = []
+#
+#             grouped_data[group_key].append(row)
+#
+#         for group_key, rows in grouped_data.items():
+#             result_row = list(group_key)
+#             for func_name, arg_index in self.aggregate_specs:
+#                 if arg_index == '*': # Special case for COUNT(*)
+#                     aggregate_values = rows
+#                 else:
+#                     aggregate_values = [row[arg_index] for row in rows]
+#
+#                 agg_result = AGG_FUNCTIONS[func_name](aggregate_values)
+#                 result_row.append(agg_result)
+#             yield tuple(result_row)
+#
+#     def display_plan(self, level=0):
+#         indent = '  ' * level
+#         group_keys_str = ', '.join([f"Col[{idx}]" for idx in self.group_key_indices])
+#
+#         agg_specs_str = ', '.join([
+#             f"{func}(Col[{idx}])" if idx != '*' else f"{func}(*)" 
+#             for func, idx in self.aggregate_specs
+#         ])
+#
+#         output = [f"{indent}* Aggregate (GROUP BY: {group_keys_str})"]
+#         output.append(f"{indent}  Aggregates: {agg_specs_str}")
+#         output.append(self.parent.display_plan(level + 1))
+#         return '\n'.join(output)
+class AggregationState:
+    """Base class defining the interface for all aggregate functions."""
+    def __init__(self):
+        self.result = self._get_initial_value()
+        
+    def _get_initial_value(self):
+        """Returns the starting value for the aggregate."""
+        raise NotImplementedError
+
+    def update(self, value):
+        """Updates the running state with a new value."""
+        raise NotImplementedError
+        
+    def finalize(self):
+        """Calculates the final result (needed for AVG)."""
+        return self.result
+
+class SumState(AggregationState):
+    def _get_initial_value(self): return 0
+    def update(self, value):
+        if value is not None:
+            self.result += value
+
+class CountState(AggregationState):
+    def _get_initial_value(self): return 0
+    def update(self, value):
+        # COUNT(*) (value is always a row) or COUNT(col) (value is non-None)
+        if value is not None: 
+            self.result += 1
+
+class MaxState(AggregationState):
+    def _get_initial_value(self): return None
+    def update(self, value):
+        if value is not None:
+            if self.result is None or value > self.result:
+                self.result = value
+
+class MinState(AggregationState):
+    def _get_initial_value(self): return None
+    def update(self, value):
+        if value is not None:
+            if self.result is None or value < self.result:
+                self.result = value
+                
+class AvgState(AggregationState):
+    def __init__(self):
+        self.sum_state = SumState()
+        self.count_state = CountState()
+
+    def _get_initial_value(self): return (0, 0) # Store (sum, count) - not used
+    def update(self, value):
+        self.sum_state.update(value)
+        self.count_state.update(value)
+
+    def finalize(self):
+        """Final calculation: sum / count"""
+        total_sum = self.sum_state.result
+        total_n = self.count_state.result
+        
+        if total_n == 0:
+            return None # Division by zero
+        return total_sum / total_n
+
+
+
+# Mapping from function name (from AST) to the new State class
+AGGREGATE_MAP = {
+    'SUM': SumState,
+    'COUNT': CountState,
+    'MAX': MaxState,
+    'MIN': MinState, # Added MIN
+    'AVG': AvgState,
 }
 
 class Aggregate:
     def __init__(self, group_key_indices, aggregate_specs, parent):
-        self.group_key_indices = group_key_indices  # [index1, index2, ...]
-        self.aggregate_specs = aggregate_specs      # [(func_name, arg_index), ...]
+        self.group_key_indices = group_key_indices
+        self.aggregate_specs = aggregate_specs # [(func_name, arg_index), ...]
         self.parent = parent
-        
+
     def next(self):
-        grouped_data = {}
+        # Dictionary to hold the state: 
+        # {group_key_tuple: [AggStateObject1, AggStateObject2, ...]}
+        grouped_states = {}
         
+        # 1. Iterate and Update Aggregate State Objects
         for row in self.parent.next():
             group_key = tuple(row[i] for i in self.group_key_indices)
             
-            if group_key not in grouped_data:
-                grouped_data[group_key] = []
+            if group_key not in grouped_states:
+                # Initialize a list of state objects for a new group
+                state_objects = []
+                for func, arg_index in self.aggregate_specs:
+                    StateClass = AGGREGATE_MAP[func]
+                    state_objects.append(StateClass())
+                grouped_states[group_key] = state_objects
+
+            # Retrieve the list of state objects for the current group
+            current_states = grouped_states[group_key]
+
+            # Update each state object
+            for i, (func, arg_index) in enumerate(self.aggregate_specs):
+                state_object = current_states[i]
                 
-            grouped_data[group_key].append(row)
-            
-        for group_key, rows in grouped_data.items():
-            result_row = list(group_key)
-            for func_name, arg_index in self.aggregate_specs:
-                if arg_index == '*': # Special case for COUNT(*)
-                    aggregate_values = rows
+                # Get the value to pass to the update method
+                if arg_index == '*':
+                    # For COUNT(*), we pass a non-None value (e.g., True) to signal a row exists
+                    value = True 
                 else:
-                    aggregate_values = [row[arg_index] for row in rows]
+                    value = row[arg_index]
                 
-                agg_result = AGG_FUNCTIONS[func_name](aggregate_values)
-                result_row.append(agg_result)
+                state_object.update(value)
+
+        # 2. Finalize and Yield Results
+        for group_key, state_objects in grouped_states.items():
+            result_row = list(group_key)
+            
+            for state_object in state_objects:
+                # Call finalize() which calculates the final result (e.g., SUM/COUNT for AVG)
+                final_agg_result = state_object.finalize() 
+                result_row.append(final_agg_result)
+
             yield tuple(result_row)
 
     def display_plan(self, level=0):
         indent = '  ' * level
-        group_keys_str = ', '.join([f"Col[{idx}]" for idx in self.group_key_indices])
         
+        # 1. Format GROUP BY Keys
+        # NOTE: This assumes you have a way (like a Catalog) to map index back to name, 
+        # but for plan display, referencing the index is often sufficient if names are unknown.
+        
+        if self.group_key_indices:
+            # Display grouping columns if they exist
+            group_keys_str = ', '.join([f"Col[{idx}]" for idx in self.group_key_indices])
+            group_by_line = f"(GROUP BY: {group_keys_str})"
+        else:
+            # This handles global aggregation (no GROUP BY)
+            group_by_line = "(Global Aggregation)"
+
+        # 2. Format Aggregates
         agg_specs_str = ', '.join([
             f"{func}(Col[{idx}])" if idx != '*' else f"{func}(*)" 
             for func, idx in self.aggregate_specs
         ])
         
-        output = [f"{indent}* Aggregate (GROUP BY: {group_keys_str})"]
+        output = [f"{indent}* Aggregate {group_by_line}"]
         output.append(f"{indent}  Aggregates: {agg_specs_str}")
+        
+        # 3. Recursively call display_plan on the parent operator
         output.append(self.parent.display_plan(level + 1))
+        
         return '\n'.join(output)
 
 if __name__ == '__main__':

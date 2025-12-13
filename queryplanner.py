@@ -1,5 +1,5 @@
 from syntax_tree import ASTNode, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall
-from operators import Filter, BaseIterator, Projection, Sorter, Limit, LogicalFilter
+from operators import Filter, BaseIterator, Projection, Sorter, Limit, LogicalFilter, Aggregate
 from catalog import Catalog
 
 def _get_mock_page_generator():
@@ -18,6 +18,39 @@ def _get_mock_page_generator():
         yield page
 
 
+def generate_output_column_names(ast_columns: list, table_name: str, catalog) -> list[str]:
+    """
+    Translates the list of AST nodes from the SELECT clause into a list of 
+    display column names, handling SELECT * using the Catalog.
+    """
+    
+    # --- Check for the SELECT * case ---
+    if len(ast_columns) == 1 and isinstance(ast_columns[0], ColumnRef) and ast_columns[0].name == '*':
+        # Use the Catalog to get the expanded list of names
+        return catalog.get_all_column_names(table_name)
+    
+    # --- Handle explicit columns/expressions ---
+    names = []
+    
+    for item in ast_columns:
+        if isinstance(item, ColumnRef):
+            names.append(item.name.upper())
+            
+        elif isinstance(item, AggregateCall):
+            func = item.function_name.upper()
+            arg = item.argument.upper() if item.argument != '*' else item.argument
+            names.append(f"{func}({arg})")
+            
+        elif isinstance(item, Literal):
+            names.append(str(item.value).upper())
+            
+        else:
+            names.append("EXPR")
+            
+    return names
+
+
+
 class QueryPlanner:
     def __init__(self, catalog: Catalog):
         self.catalog = catalog
@@ -32,38 +65,141 @@ class QueryPlanner:
 
         table_name = ast_root.table
         
-        # Assuming ast_root is a SelectStatement with new attributes
-        table_name = ast_root.table
         base_iterator = BaseIterator(table_name, _get_mock_page_generator())
         current_plan_root = base_iterator
         
-        # 1. Plan WHERE clause (Filter)
         if ast_root.where_clause:
             filter_operator = self._plan_filter_clause(ast_root.where_clause, base_iterator, table_name)
             current_plan_root = filter_operator
+
+        aggregate_specs = self._get_aggregate_specs(ast_root.columns, table_name)
+        
+        group_key_ast_nodes = ast_root.group_by_clause.columns if ast_root.group_by_clause else []
+
+        if ast_root.group_by_clause and ast_root.group_by_clause.columns:
+            group_key_indices = self._get_group_key_indices(ast_root.group_by_clause, table_name)
+            aggregate_operator = Aggregate(group_key_indices, aggregate_specs, current_plan_root)
+            current_plan_root = aggregate_operator
+        elif aggregate_specs:
+             aggregate_operator = Aggregate([], aggregate_specs, current_plan_root)
+             current_plan_root = aggregate_operator
             
-        # 2. Plan ORDER BY clause (Sorter)
         if hasattr(ast_root, 'order_by_clause') and ast_root.order_by_clause:
             sort_keys = self._get_sort_keys(ast_root.order_by_clause, table_name)
-            
-            # The Sorter's parent is the current root (Filter or BaseIterator)
             sorter_operator = Sorter(sort_keys, current_plan_root)
             current_plan_root = sorter_operator
 
-        # 3. Plan LIMIT clause (Limit)
         if hasattr(ast_root, 'limit_clause') and ast_root.limit_clause:
             limit_count = ast_root.limit_clause.count
-            
-            # The Limit's parent is the current root (Sorter or Filter/BaseIterator)
             limit_operator = Limit(limit_count, current_plan_root)
             current_plan_root = limit_operator
 
-        # 4. Plan SELECT clause (Projection)
-        column_indices = self._get_projection_indices(ast_root.columns, table_name)
-        projection_operator = Projection(column_indices, current_plan_root)
+        # --- FINAL STEP: PROJECTION SETUP ---
+        
+        # A. Determine final indices (reusing your existing logic)
+        is_aggregation_present = (ast_root.group_by_clause and ast_root.group_by_clause.columns) or aggregate_specs
+
+        if is_aggregation_present:
+            column_indices = self._get_final_projection_indices(
+                ast_root.columns, 
+                group_key_ast_nodes, # The group key AST nodes passed to Projection index calculation
+                table_name
+            )
+        else:
+            # Standard projection for non-aggregate queries
+            column_indices = self._get_projection_indices(ast_root.columns, table_name)
+
+        # B. Generate the Column Names for Display (NEW)
+        # Assuming the helper function is imported or defined as self._generate_output_column_names
+        output_names = generate_output_column_names(
+            ast_columns=ast_root.columns,
+            table_name=table_name,
+            catalog=self.catalog # Pass the catalog instance for '*' expansion
+        )
+
+        # C. Create the Projection Operator with both Indices and Names (NEW)
+        projection_operator = Projection(
+            column_indices=column_indices, 
+            column_names=output_names,  # <--- Storing the generated names
+            parent=current_plan_root
+        )
         
         return projection_operator
+    
+    def _get_group_key_indices(self, group_by_clause, table_name):
+        """Resolves ColumnRef nodes in GROUP BY to indices."""
+        indices = []
+        for col_ref in group_by_clause.columns:
+            indices.append(self.catalog.get_column_index(table_name, col_ref.name))
+        return indices
+
+    def _get_aggregate_specs(self, column_nodes, table_name):
+        """Extracts (function_name, argument_index) tuples from SELECT list."""
+        specs = []
+        for node in column_nodes:
+            if isinstance(node, AggregateCall):
+                func_name = node.function_name  # MAX, COUNT
+                arg = node.argument  # column name or literal or *
+                
+                if arg == '*':
+                    arg_index = '*'
+                else:
+                    arg_index = self.catalog.get_column_index(table_name, arg)
+                
+                specs.append((func_name, arg_index))
+        return specs
         
+    def _get_final_projection_indices(self, column_nodes, group_key_ast_nodes, table_name):
+        """
+        Maps the requested SELECT columns to the final Aggregate operator's output indices.
+        Output row structure: [Group Keys | Aggregate Results]
+        """
+        
+        # NOTE: The parameter name changed from 'group_key_indices' (list of integers) 
+        # to 'group_key_ast_nodes' (list of ColumnRef objects) for clarity in this function.
+        # This requires adjusting the plan_query call above.
+
+        # Case 1: Global Aggregation (No GROUP BY)
+        if not group_key_ast_nodes:
+            # The Nth aggregate is at output index N-1
+            return list(range(len(column_nodes)))
+        
+        # --- Case 2: Grouped Aggregation ---
+        final_indices = []
+        
+        # 1. Create a map for Group Key output indices
+        num_group_keys = len(group_key_ast_nodes)
+        group_key_output_map = {}
+        for i, col_ref in enumerate(group_key_ast_nodes):
+            # Map the actual column name to its new index in the Aggregate output (0, 1, 2, ...)
+            group_key_output_map[col_ref.name] = i 
+
+        # 2. Iterate SELECT list and determine final projection indices
+        agg_counter = 0 # Tracks how many AggregateCalls have been processed
+        
+        for node in column_nodes:
+            if isinstance(node, ColumnRef):
+                # ColumnRef: Must be a column that appeared in the GROUP BY clause.
+                col_name = node.name
+                
+                if col_name in group_key_output_map:
+                    # The index is its position in the group key output
+                    final_indices.append(group_key_output_map[col_name])
+                else:
+                    # This is the SQL error state: selecting a non-grouped, non-aggregated column
+                    raise SyntaxError(
+                        f"Column '{col_name}' must appear in the GROUP BY clause or be used in an aggregate function."
+                    )
+            
+            elif isinstance(node, AggregateCall):
+                # AggregateCall: Index starts after all group keys
+                agg_output_index = num_group_keys + agg_counter
+                
+                final_indices.append(agg_output_index)
+                agg_counter += 1
+                
+        return final_indices
+
     def _get_sort_keys(self, order_by_clause, table_name):
         """Converts OrderBy AST nodes into a list of (index, direction) tuples."""
         sort_keys = []
@@ -146,10 +282,6 @@ class QueryPlanner:
             # In a full system, a separate Aggregate Operator would be inserted 
             # *before* the Projection. For simplicity here, we only handle simple column selection.
         return indices
-
-    def execute_plan(self, plan_handle):
-        for row in plan_handle.next():
-            print(row)
 
 # class QueryPlanner:
 #     def __init__(self, buffer_manager: BufferManager, table_collection):
