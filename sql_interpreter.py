@@ -12,6 +12,7 @@ class qtrans(StrEnum):
     WHERE = 'WHERE'
     ORDER = 'ORDER'
     GROUP = 'GROUP'
+    DISTINCT = 'DISTINCT'
     BY = 'BY'
     LIMIT = 'LIMIT'
     AND = 'AND'
@@ -20,9 +21,9 @@ class qtrans(StrEnum):
     MIN = 'MIN'
     MAX = 'MAX'
     AVG = 'AVG'
+    SUM = 'SUM'
 
-
-class qoperators(StrEnum):
+class qarithmaticoperators(StrEnum):
     ADD = '+'
     SUB = '-'
     DIV = '/'
@@ -30,7 +31,7 @@ class qoperators(StrEnum):
     OB = '('
     CB = ')'
 
-class qcomparisonoperators(StrEnum):
+class qcomparators(StrEnum):
     EQ = '='
     NEQ = '!='
     LT = '<'
@@ -46,7 +47,7 @@ class qseparators(StrEnum):
     WHITESPACE = ' '
 
 
-token_separators = [e.value for e in qoperators] + [e.value for e in qseparators] + [e.value for e in qcomparisonoperators]
+token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators]
 keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
 
 def tokenize(query: str) -> list[str]:
@@ -59,7 +60,8 @@ def tokenize(query: str) -> list[str]:
     prev_char_index = char_index
     while char_index < len(query):
         if query[char_index] == r"'":
-            # literal detection# Look for the closing quote
+            # literal detection
+            # look ahead for the closing quote
             start_quote_index = char_index
             char_index += 1
             while char_index < len(query) and not (query[char_index] == "'" and query[char_index-1] != "\\"):  # escape ' is handled this way. -1 is safe because the cursor has advanced by one in prev line
@@ -145,6 +147,10 @@ class Parser:
         """
         
         self.stream.match(qtype.SELECT)
+        is_distinct = False
+        if self.stream.current() == qtrans.DISTINCT:
+            self.stream.match(qtrans.DISTINCT)
+            is_distinct = True
         columns = self._parse_column_list()
         
         # ... (Parsing FROM and WHERE remains the same) ...
@@ -181,11 +187,16 @@ class Parser:
             
         self.stream.match(qseparators.SEMICOLON)
         
-        return SelectStatement(columns, table_name, where_clause, 
+        return SelectStatement(columns, table_name, 
+                               is_distinct=is_distinct,
+                               where_clause=where_clause,
                                group_by_clause=group_by_clause, # Added to SelectStatement
                                order_by_clause=order_by_clause, 
                                limit_clause=limit_clause)
-        
+    
+    def _parse_distinct(self):
+        """Parse """
+
     def _parse_group_by(self):
         """Parses: col1, col2, ..."""
         group_columns = []
@@ -264,7 +275,7 @@ class Parser:
         current = self.stream.current()
         
         # Check for aggregate functions
-        if current in ['COUNT', 'MIN', 'MAX', 'AVG']:
+        if current in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
             function_name = self.stream.match(current)
             self.stream.match('(')
             
@@ -343,7 +354,7 @@ class Parser:
         
         # Check for comparison operator
         comparison_op = self.stream.current()
-        if comparison_op in [e.value for e in qcomparisonoperators]:
+        if comparison_op in [e.value for e in qcomparators]:
             self.stream.advance()
             right_operand = self._parse_operand()
             return Comparison(comparison_op, left_operand, right_operand)

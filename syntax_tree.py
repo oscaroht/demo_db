@@ -37,11 +37,12 @@ class ASTNode:
 
 class SelectStatement(ASTNode):
     """Represents the entire SELECT query."""
-    def __init__(self, columns, table, where_clause=None, order_by_clause=None, limit_clause=None, group_by_clause=None):
+    def __init__(self, columns, table, where_clause=None, is_distinct=False, order_by_clause=None, limit_clause=None, group_by_clause=None):
         self.columns = columns        # List of ColumnRef or AggregateCall nodes
         self.table = table            # String: table name
         self.where_clause = where_clause  # Logical condition AST node
         self.group_by_clause = group_by_clause
+        self.is_distinct = is_distinct
         self.order_by_clause = order_by_clause
         self.limit_clause = limit_clause
 
@@ -66,6 +67,11 @@ class SortItem(ASTNode):
         self.column = column    # ColumnRef node
         self.direction = direction # 'ASC' or 'DESC'
 
+class DistinctClause(ASTNode):
+    """Represents the DISTINCT clause."""
+    def __init__(self, column):
+        self.column = column
+ 
 class LimitClause(ASTNode):
     """Represents the LIMIT clause."""
     def __init__(self, count):

@@ -1,3 +1,45 @@
+import abc
+from typing import Generator, List, Any
+from functools import cmp_to_key
+
+Row = tuple[Any, ...]
+
+class Operator(abc.ABC):
+    """Abstract Base Class for all relational operators."""
+
+    @abc.abstractmethod
+    def next(self) -> Generator[Row, None, None]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def display_plan(self, indent: int = 0) -> str:
+        raise NotImplementedError
+        
+    @abc.abstractmethod
+    def get_output_schema_names(self) -> List[str]:
+        """Returns the column names that this operator outputs."""
+        raise NotImplementedError
+
+
+class BaseIterator(Operator):
+    def __init__(self, table_name, data_generator, catalog):
+        self.table_name = table_name
+        self.data_generator = data_generator
+        self.catalog = catalog
+    
+    def next(self):
+        """Yields all rows from the table source."""
+        for row in self.data_generator():
+            yield row
+
+    def display_plan(self, level=0) -> str:
+        indent = '  ' * level
+        return f"{indent}* TableScan (Source: {self.table_name})"
+    
+    def get_output_schema_names(self) -> List[str]:
+        # The schema is the list of all column names in the source table.
+        # This assumes your Catalog has a method to retrieve column names.
+        return self.catalog.get_all_column_names(self.table_name)
 
 operators = {
     '=': lambda x, y: x == y,
@@ -8,24 +50,8 @@ operators = {
     '<=': lambda x, y: x <= y
 }
 
-class BaseIterator:
-    def __init__(self, table_name, page_generator):
-        self.table_name = table_name
-        self.page_generator = page_generator
-    
-    def next(self):
-        """Yields all rows from the table source."""
-        for page in self.page_generator:
-            for row in page.rows:
-                yield row
-
-    def display_plan(self, level=0):
-        indent = '  ' * level
-        return f"{indent}* TableScan (Source: {self.table_name})"
-
-
-class Filter:
-    def __init__(self, comparison: str, val1=None, val2=None, col_idx1=None, col_idx2=None, parent=None):
+class Filter(Operator):
+    def __init__(self, comparison: str, parent: Operator, val1=None, val2=None, col_idx1=None, col_idx2=None):
         self.comparison_function = operators[comparison]
         self.val1, self.val2 = val1, val2
         self.col_idx1, self.col_idx2 = col_idx1, col_idx2
@@ -42,7 +68,7 @@ class Filter:
             if self.check(row):
                 yield row
     
-    def display_plan(self, level=0):
+    def display_plan(self, level=0) -> str:
         indent = '  ' * level
         
         left_op = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
@@ -54,7 +80,10 @@ class Filter:
             
         return '\n'.join(output)
 
-class LogicalFilter:
+    def get_output_schema_names(self) -> List[str]:
+        return self.parent.get_output_schema_names()
+
+class LogicalFilter(Operator):
     def __init__(self, op, left_child, right_child, parent):
         self.op = op
         self.left = left_child
@@ -92,9 +121,11 @@ class LogicalFilter:
             output.append(self.parent.display_plan(level + 1)) 
             
         return '\n'.join(output)
+    def get_output_schema_names(self) -> List[str]:
+        return self.parent.get_output_schema_names()
 
-class Projection:
-    def __init__(self, column_indices, column_names, parent):
+class Projection(Operator):
+    def __init__(self, column_indices: List[int], column_names, parent: Operator):
         self.column_indices = column_indices # List of indices to keep
         self.column_names = column_names
         self.parent = parent
@@ -118,37 +149,91 @@ class Projection:
             
         return '\n'.join(output)
 
-class Sorter:
+    def get_output_schema_names(self) -> List[str]:
+        # The Projection operator *is* the final output schema.
+        return self.column_names
+
+class Sorter(Operator):
     def __init__(self, sort_keys, parent):
         self.sort_keys = sort_keys  # List of (column_index, direction)
         self.parent = parent
         
     def next(self):
+        # 1. Read all input rows
         all_rows = list(self.parent.next())
         
-        sort_params = [(idx, direction == 'DESC') for idx, direction in self.sort_keys]
-        
-        primary_key_index = sort_params[0][0]
-        reverse_flag = sort_params[0][1]
+        if not all_rows:
+            return
 
+        # 2. Define the custom comparison function (cmp(a, b))
+        def compare_rows(row_a, row_b):
+            """
+            Compares two rows based on all defined sort keys.
+            Returns:
+              -1 if row_a comes before row_b
+               1 if row_b comes before row_a
+               0 if rows are equal according to the sort keys
+            """
+            for index, is_descending in self.sort_keys:
+                val_a = row_a[index]
+                val_b = row_b[index]
+
+                if val_a < val_b:
+                    # ASC: a comes before b (-1). DESC: b comes before a (1).
+                    return -1 if not is_descending else 1
+                
+                if val_a > val_b:
+                    # ASC: b comes before a (1). DESC: a comes before b (-1).
+                    return 1 if not is_descending else -1
+                
+                # If values are equal, continue to the next sort key
+                
+            return 0 # All sort keys were equal
+
+        # 3. Sort the rows using the custom comparator
+        # cmp_to_key converts the old cmp function (compare_rows) into a key function
         sorted_rows = sorted(
             all_rows,
-            key=lambda row: row[primary_key_index],
-            reverse=reverse_flag
+            key=cmp_to_key(compare_rows)
         )
         
-        for row in sorted_rows:
-            yield row
-
+        # 4. Yield the sorted results
+        yield from sorted_rows
     def display_plan(self, level=0):
         indent = '  ' * level
         sort_items_str = ', '.join([f"Col[{idx}] {direction}" for idx, direction in self.sort_keys])
         output = [f"{indent}* Sorter (Keys: {sort_items_str})"]
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
+    def get_output_schema_names(self) -> List[str]:
+        return self.parent.get_output_schema_names()
 
+class Distinct(Operator): # Inherits from the ABC
+    def __init__(self, column_indices: list[int], parent: Operator):
+        self.column_indices = column_indices
+        self.parent: Operator = parent
+        self.unique_keys = set() 
 
-class Limit:
+    def next(self) -> Generator[Row, None, None]:
+        for row in self.parent.next():
+            key = tuple([row[i] for i in self.column_indices])
+            
+            if key in self.unique_keys:
+                continue
+            print(f"Unique key {key}") 
+            self.unique_keys.add(key)
+            yield row
+            
+    def display_plan(self, indent: int = 0) -> str:
+        prefix = "  " * indent
+        output = f"{prefix}Distinct Operator (on columns: {self.column_indices})\n"
+        output += self.parent.display_plan(indent + 1)
+        return output
+
+    def get_output_schema_names(self) -> List[str]:
+        return self.parent.get_output_schema_names()
+
+class Limit(Operator):
     def __init__(self, count, parent):
         self.count = count # Integer limit
         self.parent = parent
@@ -168,6 +253,8 @@ class Limit:
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
+    def get_output_schema_names(self) -> List[str]:
+        return self.parent.get_output_schema_names()
 #
 # # Performance of this Aggregate will be horible for mem performance.
 # # This is a DBMS, we cannot put the entire table in mem.
@@ -295,10 +382,11 @@ AGGREGATE_MAP = {
 }
 
 class Aggregate:
-    def __init__(self, group_key_indices, aggregate_specs, parent):
+    def __init__(self, group_key_indices, aggregate_specs, parent, output_names):
         self.group_key_indices = group_key_indices
         self.aggregate_specs = aggregate_specs # [(func_name, arg_index), ...]
         self.parent = parent
+        self.output_names = output_names
 
     def next(self):
         # Dictionary to hold the state: 
@@ -372,6 +460,9 @@ class Aggregate:
         output.append(self.parent.display_plan(level + 1))
         
         return '\n'.join(output)
+
+    def get_output_schema_names(self) -> List[str]:
+        return self.output_names
 
 if __name__ == '__main__':
     pass

@@ -1,10 +1,12 @@
 
+import buffermanager
 from metaclasses import PageInfo, TableInfo, TableInfoCollection
 from diskmanager import DiskManager
 from buffermanager import BufferManager
 from queryplanner import QueryPlanner
 from catalog import Catalog
 from sql_interpreter import tokenize, Parser, TokenStream
+from tests.test_e2e import mock_buffer_manager
 
 # user_input = input("Press enter to continue...")
 
@@ -81,6 +83,34 @@ page_info.table_info = tbl_info
 
 table_collection = TableInfoCollection({tbl_info.table_name: tbl_info})
 
+table_data = {"USERS":[
+    (1, 'Alice', 30, 'NY', 60000),
+    (2, 'Bob', 22, 'SF', 45000),
+    (3, 'Charlie', 25, 'NY', 55000),
+    (4, 'Dave', 40, 'LA', 70000),
+    (5, 'Eve', 19, 'BOS', 30000),
+    (6, 'Fay', 22, 'SF', 45000),
+    (7, 'Grace', 30, 'NY', 80000),
+]}
+
+class MockBufferManager:
+    def __init__(self, table_data_map: dict):
+        """Initializes the mock with in-memory data for all tables."""
+        self.table_data_map = table_data_map
+
+    def get_data_generator(self, table_name: str):
+        """
+        Simulates the Buffer Manager fetching pages and returning a stream 
+        of rows (tuples) for a specific table scan.
+        """
+        # Logic remains the same: Look up table name and return a row generator
+        table_name_upper = table_name.upper()
+        # ... (rest of the generator logic) ...
+        # Return the generator function
+        def data_generator():
+            yield from self.table_data_map[table_name_upper]
+        return data_generator
+
 mock_schema = {
     'USERS': {
         'ID': 0,
@@ -91,25 +121,27 @@ mock_schema = {
     }
 }
 mock_catalog = Catalog(mock_schema)
-
+mock_buffer_manager = MockBufferManager(table_data)
 # Re-run the AST generation for the complex query
 query = "SELECT name, salary FROM users WHERE (age >= 25 AND city = 'NY') OR salary > 65000 ORDER BY SALARY DESC limit 2;"
-query = "SELECT city, AVG(salary) FROM users GROUP BY city;"
+query = "SELECT city, avg(salary) FROM users GROUP BY city;"
+# query = "SELECT DISTINCT city FROM users;"
 # Tokens and Parser are assumed to be available from the previous step
 tokens = tokenize(query)
-print(tokens)
 stream = TokenStream(tokens)
+print(f"--TOKENS--")
 print(stream.tokens)
 parser = Parser(stream) 
+print("\n" + "="*50)
 ast_root = parser.parse()
 
-print(f"--- 1. AST Generated ---")
+print(f"--ABSTRACT SYNTAX TREE (AST)--")
 print(ast_root.display())
-print("\n" + "="*50 + "\n")
+print("\n" + "="*50)
 
-planner = QueryPlanner(mock_catalog)
+planner = QueryPlanner(mock_catalog, mock_buffer_manager)
 query_plan_root = planner.plan_query(ast_root)
-
+print("--QUERY PLAN--")
 print(query_plan_root.display_plan())
 
 

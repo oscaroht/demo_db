@@ -1,5 +1,5 @@
 import pytest
-from sql_interpreter import tonkenizer, parser
+from sql_interpreter import tonkenize, parser
 
 def test_tokenizer():
     user_input = "SELECT id, num, letter FROM tbl WHERE id = 1;"
