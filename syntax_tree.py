@@ -97,6 +97,7 @@ class GroupByClause(ASTNode):
         self.columns = columns # List of ColumnRef nodes
 class AggregateCall(ASTNode):
     """Represents an aggregate function call (e.g., COUNT(*), MAX(col))."""
-    def __init__(self, function_name, argument=None):
+    def __init__(self, function_name, argument=None, is_distinct=False):
         self.function_name = function_name # String (e.g., 'COUNT', 'MAX')
         self.argument = argument           # ColumnRef or '*'
+        self.is_distinct = is_distinct

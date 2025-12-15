@@ -278,7 +278,11 @@ class Parser:
         if current in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
             function_name = self.stream.match(current)
             self.stream.match('(')
-            
+            is_distinct = False 
+            # Check for COUNT(DISTINCT ..)
+            if current == qtrans.COUNT and self.stream.current() == qtrans.DISTINCT:
+                is_distinct = True
+                self.stream.advance()
             # Check for COUNT(*)
             if self.stream.current() == '*':
                 argument = self.stream.match('*')
@@ -286,18 +290,14 @@ class Parser:
                 argument = self._parse_identifier() # Column inside the aggregate
             
             self.stream.match(')')
-            return AggregateCall(function_name, argument=argument)
+            return AggregateCall(function_name, argument=argument, is_distinct=is_distinct)
             
-        # Otherwise, it's a simple column reference (identifier)
         return ColumnRef(name=self._parse_identifier())
 
     
     def _parse_identifier(self):
-        """Helper to parse a table name or column name."""
-        # Simple rule: an identifier is any token that is not a reserved keyword or separator/operator
+        """Parse a table name or column name."""
         token = self.stream.current()
-        # In a full parser, you'd check if 'token' is a keyword, but for this simple version, 
-        # we'll assume the token is a valid identifier.
         if token is None:
             raise SyntaxError("Expected an identifier, got end of stream.")
         

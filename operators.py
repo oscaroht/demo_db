@@ -255,58 +255,7 @@ class Limit(Operator):
 
     def get_output_schema_names(self) -> List[str]:
         return self.parent.get_output_schema_names()
-#
-# # Performance of this Aggregate will be horible for mem performance.
-# # This is a DBMS, we cannot put the entire table in mem.
-# AGG_FUNCTIONS = {
-#     'COUNT': lambda values: len(values),
-#     'MIN': lambda values: min(values) if values else None,
-#     'MAX': lambda values: max(values) if values else None,
-#     'AVG': lambda values: sum(values) / len(values) if values else None,
-# }
-#
-# class Aggregate:
-#     def __init__(self, group_key_indices, aggregate_specs, parent):
-#         self.group_key_indices = group_key_indices  # [index1, index2, ...]
-#         self.aggregate_specs = aggregate_specs      # [(func_name, arg_index), ...]
-#         self.parent = parent
-#
-#     def next(self):
-#         grouped_data = {}
-#
-#         for row in self.parent.next():
-#             group_key = tuple(row[i] for i in self.group_key_indices)
-#
-#             if group_key not in grouped_data:
-#                 grouped_data[group_key] = []
-#
-#             grouped_data[group_key].append(row)
-#
-#         for group_key, rows in grouped_data.items():
-#             result_row = list(group_key)
-#             for func_name, arg_index in self.aggregate_specs:
-#                 if arg_index == '*': # Special case for COUNT(*)
-#                     aggregate_values = rows
-#                 else:
-#                     aggregate_values = [row[arg_index] for row in rows]
-#
-#                 agg_result = AGG_FUNCTIONS[func_name](aggregate_values)
-#                 result_row.append(agg_result)
-#             yield tuple(result_row)
-#
-#     def display_plan(self, level=0):
-#         indent = '  ' * level
-#         group_keys_str = ', '.join([f"Col[{idx}]" for idx in self.group_key_indices])
-#
-#         agg_specs_str = ', '.join([
-#             f"{func}(Col[{idx}])" if idx != '*' else f"{func}(*)" 
-#             for func, idx in self.aggregate_specs
-#         ])
-#
-#         output = [f"{indent}* Aggregate (GROUP BY: {group_keys_str})"]
-#         output.append(f"{indent}  Aggregates: {agg_specs_str}")
-#         output.append(self.parent.display_plan(level + 1))
-#         return '\n'.join(output)
+
 class AggregationState:
     """Base class defining the interface for all aggregate functions."""
     def __init__(self):
@@ -333,7 +282,6 @@ class SumState(AggregationState):
 class CountState(AggregationState):
     def _get_initial_value(self): return 0
     def update(self, value):
-        # COUNT(*) (value is always a row) or COUNT(col) (value is non-None)
         if value is not None: 
             self.result += 1
 
@@ -377,16 +325,25 @@ AGGREGATE_MAP = {
     'SUM': SumState,
     'COUNT': CountState,
     'MAX': MaxState,
-    'MIN': MinState, # Added MIN
+    'MIN': MinState,
     'AVG': AvgState,
 }
 
 class Aggregate:
-    def __init__(self, group_key_indices, aggregate_specs, parent, output_names):
+    def __init__(self, group_key_indices, aggregate_specs, parent):
         self.group_key_indices = group_key_indices
         self.aggregate_specs = aggregate_specs # [(func_name, arg_index), ...]
         self.parent = parent
-        self.output_names = output_names
+        parent_schema = parent.get_output_schema_names()
+        group_names = [parent_schema[i] for i in group_key_indices]
+        agg_names = []
+        for func, arg in aggregate_specs:
+            if arg == '*':
+                agg_names.append(f"{func}(*)")
+            else:
+                agg_names.append(f"{func}({parent_schema[arg]})")
+
+        self.output_names = group_names + agg_names
 
     def next(self):
         # Dictionary to hold the state: 

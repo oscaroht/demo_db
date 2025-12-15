@@ -22,6 +22,7 @@ def mock_table_data() -> dict:
         (9, 'Ivy', 25, 'NY', 55000),    # NY-55k (Duplicate NY city, duplicate 55k salary, duplicate 25 age)
     ]}
 
+
 class MockBufferManager:
     def __init__(self, table_data_map: dict):
         """Initializes the mock with in-memory data for all tables."""
@@ -151,7 +152,16 @@ def test_global_aggregate_count_star(planner):
     
     # Total rows: 9
     assert results == [(9,)]
+ 
+def test_count_distinct(planner):
+    """Test SELECT COUNT(DISTINCT age) with a WHERE clause."""
+    query = "SELECT COUNT(DISTINCT age) FROM users;"
+    results = execute_query_and_get_results(planner, query)
     
+    assert len(results) == 1
+    assert (5 in [r[1] for r in results])
+
+   
 def test_global_aggregate_sum(planner):
     """Test SUM(SALARY) without GROUP BY."""
     query = "SELECT SUM(salary) FROM users;"
@@ -291,51 +301,51 @@ def test_order_by_multi_key_asc(planner):
     
     assert results == expected
 
-#
-# def test_order_by_multi_key_mixed_direction(planner):
-#     """
-#     Test ORDER BY on two keys with mixed directions.
-#     Query: ORDER BY city ASC, salary DESC
-#     Expected: Should group by CITY (ASC), then order salaries within each city group (DESC).
-#     """
-#     query = "SELECT city, salary, name FROM users ORDER BY city ASC, salary DESC;"
-#     results = execute_query_and_get_results(planner, query)
-#
-#     # 1. BOS (only Eve)
-#     # 2. LA (Dave, Hank - both 70k) -> Order is arbitrary tie-break, but salary is sorted DESC.
-#     # 3. NY (Grace 80k, Alice 60k, Charlie 55k, Ivy 55k) -> Should be 80k, 60k, 55k, 55k
-#     # 4. SF (Bob 45k, Fay 45k) -> Order is arbitrary tie-break, but salary is sorted DESC.
-#
-#     expected = [
-#         # BOS (1 entry)
-#         ('BOS', 30000, 'Eve'),
-#
-#         # LA (2 entries, same salary)
-#         ('LA', 70000, 'Dave'), # Or Hank, depends on stable sort/internal ID tie-break
-#         ('LA', 70000, 'Hank'), # Or Dave
-#
-#         # NY (4 entries, Salary DESC)
-#         ('NY', 80000, 'Grace'), # Highest
-#         ('NY', 60000, 'Alice'),
-#         ('NY', 55000, 'Charlie'), # Charlie/Ivy tie is internal
-#         ('NY', 55000, 'Ivy'),     # Ivy/Charlie tie is internal
-#
-#         # SF (2 entries, same salary)
-#         ('SF', 45000, 'Bob'),  # Or Fay
-#         ('SF', 45000, 'Fay'),  # Or Bob
-#     ]
-#
-#     # Since the tie-break order for rows with identical key values (e.g., Dave/Hank) is non-deterministic 
-#     # without an implicit primary key, we check the set of results for each city, 
-#     # but the primary sort order MUST be preserved.
-#
-#     # Check primary sort: City (ASC)
-#     city_order = [r[0] for r in results]
-#     assert city_order[:1] == ['BOS']
-#     assert city_order[1:3] == ['LA', 'LA']
-#     assert city_order[3:7] == ['NY', 'NY', 'NY', 'NY']
-#     assert city_order[7:] == ['SF', 'SF']
-#
-#     # Check secondary sort: Salary within NY (DESC)
-#     ny_results = [r[1] for r in results if r[0] == 'NY']
-#     assert ny_results == [80000, 60000, 55000, 55000] # Checks descending order
+
+def test_order_by_multi_key_mixed_direction(planner):
+    """
+    Test ORDER BY on two keys with mixed directions.
+    Query: ORDER BY city ASC, salary DESC
+    Expected: Should group by CITY (ASC), then order salaries within each city group (DESC).
+    """
+    query = "SELECT city, salary, name FROM users ORDER BY city ASC, salary DESC;"
+    results = execute_query_and_get_results(planner, query)
+
+    # 1. BOS (only Eve)
+    # 2. LA (Dave, Hank - both 70k) -> Order is arbitrary tie-break, but salary is sorted DESC.
+    # 3. NY (Grace 80k, Alice 60k, Charlie 55k, Ivy 55k) -> Should be 80k, 60k, 55k, 55k
+    # 4. SF (Bob 45k, Fay 45k) -> Order is arbitrary tie-break, but salary is sorted DESC.
+
+    expected = [
+        # BOS (1 entry)
+        ('BOS', 30000, 'Eve'),
+
+        # LA (2 entries, same salary)
+        ('LA', 70000, 'Dave'), # Or Hank, depends on stable sort/internal ID tie-break
+        ('LA', 70000, 'Hank'), # Or Dave
+
+        # NY (4 entries, Salary DESC)
+        ('NY', 80000, 'Grace'), # Highest
+        ('NY', 60000, 'Alice'),
+        ('NY', 55000, 'Charlie'), # Charlie/Ivy tie is internal
+        ('NY', 55000, 'Ivy'),     # Ivy/Charlie tie is internal
+
+        # SF (2 entries, same salary)
+        ('SF', 45000, 'Bob'),  # Or Fay
+        ('SF', 45000, 'Fay'),  # Or Bob
+    ]
+
+    # Since the tie-break order for rows with identical key values (e.g., Dave/Hank) is non-deterministic 
+    # without an implicit primary key, we check the set of results for each city, 
+    # but the primary sort order MUST be preserved.
+
+    # Check primary sort: City (ASC)
+    city_order = [r[0] for r in results]
+    assert city_order[:1] == ['BOS']
+    assert city_order[1:3] == ['LA', 'LA']
+    assert city_order[3:7] == ['NY', 'NY', 'NY', 'NY']
+    assert city_order[7:] == ['SF', 'SF']
+
+    # Check secondary sort: Salary within NY (DESC)
+    ny_results = [r[1] for r in results if r[0] == 'NY']
+    assert ny_results == [80000, 60000, 55000, 55000] # Checks descending order

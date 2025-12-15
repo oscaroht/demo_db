@@ -9,6 +9,9 @@ class MockParent:
         for row in self._data:
             yield row
 
+    def get_output_schema_names(self):
+        return ['id', 'name', 'age', 'city', 'salary']
+
 TEST_DATA_FULL_SCHEMA = [
     (1, 'Alice', 30, 'NY', 60000),  # 0
     (2, 'Bob', 22, 'SF', 45000),    # 1
@@ -479,7 +482,7 @@ def test_aggregate_global_sum():
         parent=parent,
         group_key_indices=[],             # No GROUP BY
         aggregate_specs=[('SUM', 4)],     # SUM(SALARY)
-        output_names=['SUM(SALARY)']
+        
     )
     
     results = list(aggregate_op.next())
@@ -498,7 +501,7 @@ def test_aggregate_group_by_city_count_all():
         parent=parent,
         group_key_indices=[3],              # GROUP BY CITY
         aggregate_specs=[('COUNT', '*')],   # COUNT(*)
-        output_names=['CITY', 'COUNT(*)']
+        
     )
     
     results = list(aggregate_op.next())
@@ -521,7 +524,7 @@ def test_aggregate_group_by_city_avg_salary():
         parent=parent,
         group_key_indices=[3],             # GROUP BY CITY
         aggregate_specs=[('AVG', 4)],      # AVG(SALARY)
-        output_names=['CITY', 'AVG(SALARY)']
+        
     )
     
     results = list(aggregate_op.next())
@@ -542,7 +545,7 @@ def test_aggregate_group_by_age_max_salary():
         parent=parent,
         group_key_indices=[2],             # GROUP BY AGE
         aggregate_specs=[('MAX', 4)],      # MAX(SALARY)
-        output_names=['AGE', 'MAX(SALARY)']
+        
     )
     
     results = list(aggregate_op.next())
@@ -567,7 +570,7 @@ def test_aggregate_min_age_global():
         parent=parent,
         group_key_indices=[],             # No GROUP BY
         aggregate_specs=[('MIN', 2)],     # MIN(AGE)
-        output_names=['MIN(AGE)']
+        
     )
     
     results = list(aggregate_op.next())
