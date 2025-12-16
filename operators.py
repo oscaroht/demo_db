@@ -20,6 +20,10 @@ class Operator(abc.ABC):
         """Returns the column names that this operator outputs."""
         raise NotImplementedError
 
+class Predicate(abc.ABC):
+    @abc.abstractmethod
+    def evaluate(self, row) -> bool:
+        pass
 
 class BaseIterator(Operator):
     def __init__(self, table_name, data_generator, catalog):
@@ -41,7 +45,7 @@ class BaseIterator(Operator):
         # This assumes your Catalog has a method to retrieve column names.
         return self.catalog.get_all_column_names(self.table_name)
 
-operators = {
+comparison_operators = {
     '=': lambda x, y: x == y,
     '!=': lambda x, y: x != y,
     '>': lambda x, y: x > y,
@@ -50,24 +54,53 @@ operators = {
     '<=': lambda x, y: x <= y
 }
 
-class Filter(Operator):
-    def __init__(self, comparison: str, parent: Operator, val1=None, val2=None, col_idx1=None, col_idx2=None):
-        self.comparison_function = operators[comparison]
+logical_operators = {
+    'AND': lambda x, y: x and y,
+    'OR': lambda x, y: x or y
+}
+
+class LogicalPredicate(Predicate):
+    def __init__(self, op: str, left: Predicate, right: Predicate):
+        self.func = logical_operators[op]
+        self.left = left
+        self.right = right
+
+    def evaluate(self, row):
+        if self.func is logical_operators['AND']:
+            return self.left.evaluate(row) and self.right.evaluate(row)
+        return self.left.evaluate(row) or self.right.evaluate(row)
+    def __str__(self):
+        return f"({self.left} {self.func.__name__.upper()} {self.right})"
+
+
+class ComparisonPredicate(Predicate):
+    def __init__(self, comparison: str, val1: Any, val2: Any, col_idx1: None | int, col_idx2: None | int):
+        self.comparison_function = comparison_operators[comparison]
         self.val1, self.val2 = val1, val2
         self.col_idx1, self.col_idx2 = col_idx1, col_idx2
-        self.parent = parent
 
-    def check(self, row):
+    def evaluate(self, row):
         """Evaluates the condition for a single row based on indices/values."""
         x = self.val1 if self.col_idx1 is None else row[self.col_idx1]
         y = self.val2 if self.col_idx2 is None else row[self.col_idx2]
         return self.comparison_function(x, y)
 
+    def __str__(self):
+        left = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
+        right = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"Lit[{self.val2!r}]"
+        return f"{left} {self.comparison_function.__name__} {right}"
+        
+class Filter(Operator):
+    def __init__(self, predicate: Predicate, parent: Operator):
+        self.predicate = predicate
+        self.parent = parent
+
     def next(self):
         for row in self.parent.next():
-            if self.check(row):
+            if self.predicate.evaluate(row):
                 yield row
-    
+
+        
     def display_plan(self, level=0) -> str:
         indent = '  ' * level
         
@@ -83,6 +116,41 @@ class Filter(Operator):
     def get_output_schema_names(self) -> List[str]:
         return self.parent.get_output_schema_names()
 
+#
+#
+# class Filter(Operator):
+#     def __init__(self, comparison: str, parent: Operator, val1=None, val2=None, col_idx1=None, col_idx2=None):
+#         self.comparison_function = comparison_operators[comparison]
+#         self.val1, self.val2 = val1, val2
+#         self.col_idx1, self.col_idx2 = col_idx1, col_idx2
+#         self.parent = parent
+#
+#     def check(self, row):
+#         """Evaluates the condition for a single row based on indices/values."""
+#         x = self.val1 if self.col_idx1 is None else row[self.col_idx1]
+#         y = self.val2 if self.col_idx2 is None else row[self.col_idx2]
+#         return self.comparison_function(x, y)
+#
+#     def next(self):
+#         for row in self.parent.next():
+#             if self.check(row):
+#                 yield row
+#
+#     def display_plan(self, level=0) -> str:
+#         indent = '  ' * level
+#
+#         left_op = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
+#         right_op = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"Lit[{self.val2!r}]"
+#
+#         output = [f"{indent}* Filter (Condition: {left_op} {self.comparison_function.__name__} {right_op})"]
+#         if self.parent:
+#             output.append(self.parent.display_plan(level + 1))
+#
+#         return '\n'.join(output)
+#
+#     def get_output_schema_names(self) -> List[str]:
+#         return self.parent.get_output_schema_names()
+#
 class LogicalFilter(Operator):
     def __init__(self, op, left_child, right_child, parent):
         self.op = op
@@ -288,16 +356,14 @@ class CountState(AggregationState):
 class MaxState(AggregationState):
     def _get_initial_value(self): return None
     def update(self, value):
-        if value is not None:
-            if self.result is None or value > self.result:
-                self.result = value
+        if value is not None and (self.result is None or value > self.result):
+            self.result = value
 
 class MinState(AggregationState):
     def _get_initial_value(self): return None
     def update(self, value):
-        if value is not None:
-            if self.result is None or value < self.result:
-                self.result = value
+        if value is not None and (self.result is None or value < self.result):
+            self.result = value
                 
 class AvgState(AggregationState):
     def __init__(self):
@@ -318,12 +384,21 @@ class AvgState(AggregationState):
             return None # Division by zero
         return total_sum / total_n
 
+class CountDistinctState(AggregationState):
+    def _get_initial_value(self):
+        return set()
+    def update(self, value):
+        if value is not None:
+            self.result.add(value)
+    def finalize(self):
+        return len(self.result)
 
 
 # Mapping from function name (from AST) to the new State class
 AGGREGATE_MAP = {
     'SUM': SumState,
     'COUNT': CountState,
+    'COUNT DISTINCT': CountDistinctState,
     'MAX': MaxState,
     'MIN': MinState,
     'AVG': AvgState,
@@ -332,16 +407,17 @@ AGGREGATE_MAP = {
 class Aggregate:
     def __init__(self, group_key_indices, aggregate_specs, parent):
         self.group_key_indices = group_key_indices
-        self.aggregate_specs = aggregate_specs # [(func_name, arg_index), ...]
+        self.aggregate_specs = aggregate_specs # [(func_name, arg_index, is_distinct), ...]
         self.parent = parent
         parent_schema = parent.get_output_schema_names()
         group_names = [parent_schema[i] for i in group_key_indices]
         agg_names = []
-        for func, arg in aggregate_specs:
+        for func, arg, is_distinct in aggregate_specs:
+            dist = 'DISTINCT ' if is_distinct else ''
             if arg == '*':
-                agg_names.append(f"{func}(*)")
+                agg_names.append(f"{func}({dist}*)")
             else:
-                agg_names.append(f"{func}({parent_schema[arg]})")
+                agg_names.append(f"{func}({dist}{parent_schema[arg]})")
 
         self.output_names = group_names + agg_names
 
@@ -357,7 +433,9 @@ class Aggregate:
             if group_key not in grouped_states:
                 # Initialize a list of state objects for a new group
                 state_objects = []
-                for func, arg_index in self.aggregate_specs:
+                for func, arg_index, is_distinct in self.aggregate_specs:
+                    if is_distinct:
+                        func += ' DISTINCT'
                     StateClass = AGGREGATE_MAP[func]
                     state_objects.append(StateClass())
                 grouped_states[group_key] = state_objects
@@ -366,7 +444,7 @@ class Aggregate:
             current_states = grouped_states[group_key]
 
             # Update each state object
-            for i, (func, arg_index) in enumerate(self.aggregate_specs):
+            for i, (func, arg_index, is_distinct) in enumerate(self.aggregate_specs):
                 state_object = current_states[i]
                 
                 # Get the value to pass to the update method

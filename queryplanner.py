@@ -17,6 +17,9 @@ from operators import (
     LogicalFilter,
     Aggregate,
     Distinct,
+    Predicate,
+    ComparisonPredicate,
+    LogicalPredicate
 )
 from catalog import Catalog
 
@@ -41,7 +44,9 @@ class QueryPlanner:
 
         # 2. WHERE
         if stmt.where_clause:
-            plan = self._plan_where(stmt.where_clause, plan, table)
+            #plan = self._plan_where(stmt.where_clause, plan, table)
+            predicate = self._plan_where(stmt.where_clause, table)
+            plan = Filter(predicate, plan)
 
         # 3. AGGREGATION / GROUP BY
         aggregate_specs = self._extract_aggregate_specs(stmt.columns, table)
@@ -78,47 +83,41 @@ class QueryPlanner:
 
         return plan
 
-    def _plan_where(self, ast_node, parent, table_name):
+    def _plan_where(self, ast_node, table_name) -> ComparisonPredicate | LogicalPredicate:
         if isinstance(ast_node, Comparison):
-            return self._plan_comparison(ast_node, parent, table_name)
+            return self._build_predicate(ast_node, table_name)
 
         if isinstance(ast_node, LogicalExpression):
-            left = self._plan_where(ast_node.left, parent, table_name)
-            right = self._plan_where(ast_node.right, parent, table_name)
-            return LogicalFilter(ast_node.op, left, right, parent)
+            left = self._plan_where(ast_node.left, table_name)
+            right = self._plan_where(ast_node.right, table_name)
+            return LogicalPredicate(ast_node.op, left, right)
+        raise NotImplementedError(f"AST node {ast_node} found in where clause.")
 
-        raise TypeError(f"Unsupported WHERE node: {type(ast_node)}")
-
-    def _plan_comparison(self, cmp: Comparison, parent, table):
+    def _build_predicate(self, cmp: Comparison, table) -> ComparisonPredicate:
         def resolve(operand):
             if isinstance(operand, Literal):
                 return operand.value, None
             if isinstance(operand, ColumnRef):
                 idx = self.catalog.get_column_index(table, operand.name)
+                if idx is None:
+                    raise SyntaxError(f"{operand} not column in table {table}" )
                 return None, idx
             raise TypeError(type(operand))
 
         v1, i1 = resolve(cmp.left)
         v2, i2 = resolve(cmp.right)
 
-        return Filter(
-            comparison=cmp.op,
-            parent=parent,
-            val1=v1,
-            val2=v2,
-            col_idx1=i1,
-            col_idx2=i2,
-        )
+        return ComparisonPredicate(cmp.op, v1, v2, i1, i2)
 
     def _extract_aggregate_specs(self, columns, table):
         specs = []
         for col in columns:
             if isinstance(col, AggregateCall):
                 if col.argument == "*":
-                    specs.append((col.function_name, "*"))
+                    specs.append((col.function_name, "*", col.is_distinct))
                 else:
                     idx = self.catalog.get_column_index(table, col.argument)
-                    specs.append((col.function_name, idx))
+                    specs.append((col.function_name, idx, col.is_distinct))
         return specs
 
     def _resolve_group_keys(self, group_by_clause, table):
@@ -159,10 +158,11 @@ class QueryPlanner:
                 names.append(col.name.upper())
 
             elif isinstance(col, AggregateCall):
+                dist = 'DISTINCT ' if col.is_distinct else ''
                 if col.argument == "*":
-                    name = f"{col.function_name.upper()}(*)"
+                    name = f"{col.function_name.upper()}({dist}*)"
                 else:
-                    name = f"{col.function_name.upper()}({col.argument})"
+                    name = f"{col.function_name.upper()}({dist}{col.argument})"
 
                 idx = input_schema.index(name)
                 indices.append(idx)

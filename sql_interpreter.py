@@ -22,6 +22,9 @@ class qtrans(StrEnum):
     MAX = 'MAX'
     AVG = 'AVG'
     SUM = 'SUM'
+    DESC = 'DESC'
+    ASC = 'ASC'
+    FROM = 'FROM'
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'

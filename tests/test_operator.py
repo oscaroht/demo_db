@@ -1,4 +1,4 @@
-from operators import BaseIterator, Filter, LogicalFilter, Sorter, Aggregate, Limit, Distinct
+from operators import BaseIterator, Filter, LogicalFilter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate
 
 class MockParent:
     """A dummy iterator to feed fixed data into the operators."""
@@ -9,8 +9,8 @@ class MockParent:
         for row in self._data:
             yield row
 
-    def get_output_schema_names(self):
-        return ['id', 'name', 'age', 'city', 'salary']
+    def get_output_schema_names(self, output_column_names=['id', 'name', 'age', 'city', 'salary']):
+        return output_column_names
 
 TEST_DATA_FULL_SCHEMA = [
     (1, 'Alice', 30, 'NY', 60000),  # 0
@@ -26,256 +26,171 @@ TEST_DATA_FULL_SCHEMA = [
 
 
 def test_filter_age_greater_than_30():
-    """Test Filter on AGE > 30."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter: AGE (index 2) > 30 (literal)
-    filter_op = Filter(
-        comparison='>',
-        parent=parent,
-        val1=None,
-        val2=30,
-        col_idx1=2,
-        col_idx2=None 
-    )
-    
+
+    predicate = ComparisonPredicate('>', None, 30, 2, None)
+    filter_op = Filter(predicate, parent)
+
     results = list(filter_op.next())
-    
-    # Expected: Dave (40)
+
     expected = [
         (4, 'Dave', 40, 'LA', 70000),
     ]
-    
-    assert len(results) == 1
+
     assert results == expected
 
+
 def test_filter_city_equals_SF():
-    """Test Filter on CITY = 'SF'."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter: CITY (index 3) = 'SF' (literal)
-    filter_op = Filter(
-        comparison='=',
-        parent=parent,
-        val1=None,
-        val2='SF',
-        col_idx1=3,
-        col_idx2=None 
-    )
-    
+
+    predicate = ComparisonPredicate('=', None, 'SF', 3, None)
+    filter_op = Filter(predicate, parent)
+
     results = list(filter_op.next())
-    
-    # Expected: Bob (SF), Fay (SF)
+
     expected = [
         (2, 'Bob', 22, 'SF', 45000),
         (6, 'Fay', 22, 'SF', 45000),
     ]
-    
-    assert len(results) == 2
+
     assert results == expected
 
 
 def test_filter_age_less_than_or_equal_22():
-    """Test Filter on AGE <= 22."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter: AGE (index 2) <= 22 (literal)
-    filter_op = Filter(
-        comparison='<=',
-        parent=parent,
-        val1=None,
-        val2=22,
-        col_idx1=2,
-        col_idx2=None 
-    )
-    
+
+    predicate = ComparisonPredicate('<=', None, 22, 2, None)
+    filter_op = Filter(predicate, parent)
+
     results = list(filter_op.next())
-    
-    # Expected: Bob (22), Eve (19), Fay (22), Hank (22)
+
     expected = [
         (2, 'Bob', 22, 'SF', 45000),
         (5, 'Eve', 19, 'BOS', 30000),
         (6, 'Fay', 22, 'SF', 45000),
         (8, 'Hank', 22, 'LA', 70000),
     ]
-    
-    # Order matters for iteration, so we check for exact match
-    assert len(results) == 4
+
     assert results == expected
 
 
 def test_filter_column_to_column_comparison():
-    """Test Filter on ID > AGE."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA + [(50, 'Dude', 25, 'NY', 55000)])
-    
-    # Filter: ID (index 0) < AGE (index 2)
-    filter_op = Filter(
-        comparison='>',
-        parent=parent,
-        val1=None,
-        val2=None,
-        col_idx1=0,  # ID
-        col_idx2=2   # AGE
-    )
-    
+
+    predicate = ComparisonPredicate('>', None, None, 0, 2)
+    filter_op = Filter(predicate, parent)
+
     results = list(filter_op.next())
-    
+
     expected = [
         (50, 'Dude', 25, 'NY', 55000),
     ]
-    
-    assert len(results) == 1
+
     assert results == expected
 
 
 def test_filter_empty_result_set():
-    """Test Filter that produces zero results."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter: SALARY (index 4) > 100000 (literal)
-    filter_op = Filter(
-        comparison='>',
-        parent=parent,
-        val1=None,
-        val2=100000,
-        col_idx1=4,
-        col_idx2=None 
-    )
-    
+
+    predicate = ComparisonPredicate('>', None, 100000, 4, None)
+    filter_op = Filter(predicate, parent)
+
     results = list(filter_op.next())
-    
-    assert len(results) == 0
+
     assert results == []
 
 
-
 def test_logical_filter_age_and_salary():
-    """Test LogicalFilter using AND: (AGE > 25) AND (SALARY < 70000)."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter 1 (Left Child): AGE > 25 (Alice, Dave, Grace)
-    filter_age = Filter('>', parent, val2=25, col_idx1=2, col_idx2=None)
-    
-    # Filter 2 (Right Child): SALARY < 70000 (Alice, Bob, Charlie, Eve, Fay, Ivy)
-    filter_salary = Filter('<', parent, val2=70000, col_idx1=4, col_idx2=None) 
 
-    # LogicalFilter: AND
-    logical_op = LogicalFilter(
-        op='AND',
-        left_child=filter_age,
-        right_child=filter_salary,
-        parent=parent
-    )
-    
-    results = list(logical_op.next())
-    
-    # Intersection: Alice (30, 60k)
+    age_pred = ComparisonPredicate('>', None, 25, 2, None)
+    salary_pred = ComparisonPredicate('<', None, 70000, 4, None)
+
+    predicate = LogicalPredicate('AND', age_pred, salary_pred)
+    filter_op = Filter(predicate, parent)
+
+    results = list(filter_op.next())
+
     expected = [
         (1, 'Alice', 30, 'NY', 60000),
     ]
-    
-    assert len(results) == 1
-    assert sorted(results) == sorted(expected)
+
+    assert results == expected
 
 
 def test_logical_filter_city_or_age():
-    """Test LogicalFilter using OR: (CITY = 'LA') OR (AGE = 19)."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter 1 (Left Child): CITY = 'LA' (Dave, Hank)
-    filter_city = Filter('=', parent, val2='LA', col_idx1=3, col_idx2=None)
-    
-    # Filter 2 (Right Child): AGE = 19 (Eve)
-    filter_age = Filter('=', parent, val2=19, col_idx1=2, col_idx2=None) 
 
-    # LogicalFilter: OR
-    logical_op = LogicalFilter(
-        op='OR',
-        left_child=filter_city,
-        right_child=filter_age,
-        parent=parent
-    )
-    
-    results = list(logical_op.next())
-    
-    # Union: Dave, Hank, Eve
+    city_pred = ComparisonPredicate('=', None, 'LA', 3, None)
+    age_pred = ComparisonPredicate('=', None, 19, 2, None)
+
+    predicate = LogicalPredicate('OR', city_pred, age_pred)
+    filter_op = Filter(predicate, parent)
+
+    results = list(filter_op.next())
+
     expected = [
         (4, 'Dave', 40, 'LA', 70000),
         (8, 'Hank', 22, 'LA', 70000),
         (5, 'Eve', 19, 'BOS', 30000),
     ]
-    
-    assert len(results) == 3
+
     assert sorted(results) == sorted(expected)
 
-def test_logical_filter_or_with_overlap():
-    """Test LogicalFilter using OR with overlapping results."""
-    parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter 1 (Left Child): AGE = 22 (Bob, Fay, Hank)
-    filter_age = Filter('=', parent, val2=22, col_idx1=2, col_idx2=None)
-    
-    # Filter 2 (Right Child): SALARY = 45000 (Bob, Fay)
-    filter_salary = Filter('=', parent, val2=45000, col_idx1=4, col_idx2=None) 
 
-    # LogicalFilter: OR
-    logical_op = LogicalFilter(op='OR', left_child=filter_age, right_child=filter_salary, parent=parent)
-    
-    results = list(logical_op.next())
-    
-    # Expected: Bob (22, 45k), Fay (22, 45k), Hank (22, 70k). (Duplicates must be merged)
+def test_logical_filter_or_with_overlap():
+    parent = MockParent(TEST_DATA_FULL_SCHEMA)
+
+    age_pred = ComparisonPredicate('=', None, 22, 2, None)
+    salary_pred = ComparisonPredicate('=', None, 45000, 4, None)
+
+    predicate = LogicalPredicate('OR', age_pred, salary_pred)
+    filter_op = Filter(predicate, parent)
+
+    results = list(filter_op.next())
+
     expected = [
         (2, 'Bob', 22, 'SF', 45000),
         (6, 'Fay', 22, 'SF', 45000),
         (8, 'Hank', 22, 'LA', 70000),
     ]
-    
-    assert len(results) == 3
+
     assert sorted(results) == sorted(expected)
 
-def test_logical_filter_and_empty_set():
-    """Test LogicalFilter using AND that returns zero results."""
-    parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter 1 (Left Child): CITY = 'SF' (Bob, Fay)
-    filter_city = Filter('=', parent, val2='SF', col_idx1=3, col_idx2=None)
-    
-    # Filter 2 (Right Child): AGE = 40 (Dave)
-    filter_age = Filter('=', parent, val2=40, col_idx1=2, col_idx2=None) 
 
-    # LogicalFilter: AND
-    logical_op = LogicalFilter(op='AND', left_child=filter_city, right_child=filter_age, parent=parent)
-    
-    results = list(logical_op.next())
-    
-    # Intersection: None
-    expected = []
-    
-    assert len(results) == 0
-    assert results == expected
+def test_logical_filter_and_empty_set():
+    parent = MockParent(TEST_DATA_FULL_SCHEMA)
+
+    city_pred = ComparisonPredicate('=', None, 'SF', 3, None)
+    age_pred = ComparisonPredicate('=', None, 40, 2, None)
+
+    predicate = LogicalPredicate('AND', city_pred, age_pred)
+    filter_op = Filter(predicate, parent)
+
+    results = list(filter_op.next())
+
+    assert results == []
+
 
 def test_logical_filter_or_with_one_empty_child():
-    """Test LogicalFilter using OR where one child returns no rows."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
-    
-    # Filter 1 (Left Child): SALARY > 90000 (None)
-    filter_high_salary = Filter('>', parent, val2=90000, col_idx1=4, col_idx2=None)
-    
-    # Filter 2 (Right Child): CITY = 'BOS' (Eve)
-    filter_bos_city = Filter('=', parent, val2='BOS', col_idx1=3, col_idx2=None) 
 
-    # LogicalFilter: OR
-    logical_op = LogicalFilter(op='OR', left_child=filter_high_salary, right_child=filter_bos_city, parent=parent)
-    
-    results = list(logical_op.next())
-    
-    # Union: Eve (from the right child)
+    high_salary_pred = ComparisonPredicate('>', None, 90000, 4, None)
+    city_pred = ComparisonPredicate('=', None, 'BOS', 3, None)
+
+    predicate = LogicalPredicate('OR', high_salary_pred, city_pred)
+    filter_op = Filter(predicate, parent)
+
+    results = list(filter_op.next())
+
     expected = [
         (5, 'Eve', 19, 'BOS', 30000),
     ]
-    
-    assert len(results) == 1
+
     assert results == expected
+
+
+
 
 # --- 5 Unit Tests for Sorter Operator ---
 
@@ -481,7 +396,7 @@ def test_aggregate_global_sum():
     aggregate_op = Aggregate(
         parent=parent,
         group_key_indices=[],             # No GROUP BY
-        aggregate_specs=[('SUM', 4)],     # SUM(SALARY)
+        aggregate_specs=[('SUM', 4, False)],     # SUM(SALARY)
         
     )
     
@@ -500,7 +415,7 @@ def test_aggregate_group_by_city_count_all():
     aggregate_op = Aggregate(
         parent=parent,
         group_key_indices=[3],              # GROUP BY CITY
-        aggregate_specs=[('COUNT', '*')],   # COUNT(*)
+        aggregate_specs=[('COUNT', '*', False)],   # COUNT(*)
         
     )
     
@@ -523,7 +438,7 @@ def test_aggregate_group_by_city_avg_salary():
     aggregate_op = Aggregate(
         parent=parent,
         group_key_indices=[3],             # GROUP BY CITY
-        aggregate_specs=[('AVG', 4)],      # AVG(SALARY)
+        aggregate_specs=[('AVG', 4, False)],      # AVG(SALARY)
         
     )
     
@@ -544,7 +459,7 @@ def test_aggregate_group_by_age_max_salary():
     aggregate_op = Aggregate(
         parent=parent,
         group_key_indices=[2],             # GROUP BY AGE
-        aggregate_specs=[('MAX', 4)],      # MAX(SALARY)
+        aggregate_specs=[('MAX', 4, False)],      # MAX(SALARY)
         
     )
     
@@ -569,7 +484,7 @@ def test_aggregate_min_age_global():
     aggregate_op = Aggregate(
         parent=parent,
         group_key_indices=[],             # No GROUP BY
-        aggregate_specs=[('MIN', 2)],     # MIN(AGE)
+        aggregate_specs=[('MIN', 2, False)],     # MIN(AGE)
         
     )
     

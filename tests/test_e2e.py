@@ -159,7 +159,7 @@ def test_count_distinct(planner):
     results = execute_query_and_get_results(planner, query)
     
     assert len(results) == 1
-    assert (5 in [r[1] for r in results])
+    assert (5 in [r[0] for r in results])
 
    
 def test_global_aggregate_sum(planner):
