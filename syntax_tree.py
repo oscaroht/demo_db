@@ -49,7 +49,7 @@ class SelectStatement(ASTNode):
 class ColumnRef(ASTNode):
     """Represents a column name reference."""
     def __init__(self, name):
-        self.name = name # String
+        self.name = name.lower()
 
 class Literal(ASTNode):
     """Represents a constant value (number, string)."""

@@ -1,0 +1,13 @@
+[project]
+name = "demo-db"
+version = "0.1.0"
+description = "A DBMS for education purposes"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "prompt-toolkit>=3.0.52",
+    "pytest>=9.0.2",
+]

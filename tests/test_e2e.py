@@ -1,6 +1,4 @@
 import pytest
-from unittest.mock import MagicMock
-# Assume your planner, operators, and AST are imported from shared modules
 from queryplanner import QueryPlanner 
 from sql_interpreter import tokenize, TokenStream, Parser 
 
