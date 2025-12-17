@@ -125,14 +125,14 @@ class QueryPlanner:
 
     def _plan_order_by(self, order_by_clause, plan):
         schema = plan.get_output_schema_names()
-        name_to_index = {name.upper(): i for i, name in enumerate(schema)}
+        name_to_index = {name: i for i, name in enumerate(schema)}
 
         sort_keys = []
         for item in order_by_clause.sort_items:
             if isinstance(item.column, AggregateCall):
-                name = f"{item.column.function_name.upper()}({item.column.argument.upper()})"
+                name = f"{item.column.function_name}({item.column.argument.upper()})"
             else:
-                name = item.column.name.upper()
+                name = item.column.name
 
             if name not in name_to_index:
                 raise ValueError(f"ORDER BY column '{name}' not in output")
@@ -155,14 +155,14 @@ class QueryPlanner:
             if isinstance(col, ColumnRef):
                 idx = input_schema.index(col.name)
                 indices.append(idx)
-                names.append(col.name.upper())
+                names.append(col.name)
 
             elif isinstance(col, AggregateCall):
                 dist = 'DISTINCT ' if col.is_distinct else ''
                 if col.argument == "*":
-                    name = f"{col.function_name.upper()}({dist}*)"
+                    name = f"{col.function_name}({dist}*)"
                 else:
-                    name = f"{col.function_name.upper()}({dist}{col.argument})"
+                    name = f"{col.function_name}({dist}{col.argument})"
 
                 idx = input_schema.index(name)
                 indices.append(idx)

@@ -6,11 +6,11 @@ class Catalog:
 
     def get_column_index(self, table_name, column_name):
         """Looks up the zero-based index for a column."""
-        table_info = self.schema.get(table_name.upper())
+        table_info = self.schema.get(table_name.lower())
         if not table_info:
             raise ValueError(f"Table '{table_name}' not found in catalog.")
         
-        col_index = table_info.get(column_name.upper())
+        col_index = table_info.get(column_name.lower())
         if col_index is None:
             # Check for aggregate argument 'COUNT(*)' where argument is '*'
             if column_name == '*':
@@ -20,7 +20,7 @@ class Catalog:
 
     def get_all_column_names(self, table_name) -> list[str]:
         """Returns the list of column names for a table, sorted by their index."""
-        table_info = self.schema.get(table_name.upper())
+        table_info = self.schema.get(table_name.lower())
         if not table_info:
             raise ValueError(f"Table '{table_name}' not found in catalog.")
         

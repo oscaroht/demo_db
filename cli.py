@@ -75,18 +75,33 @@ session = PromptSession(
 )
 
 
+logo = """
 
+
+ ██████╗ ███████╗ ██████╗ █████╗ ██████╗     ██████╗ ██████╗ 
+██╔═══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗    ██╔══██╗██╔══██╗
+██║   ██║███████╗██║     ███████║██████╔╝    ██║  ██║██████╔╝
+██║   ██║╚════██║██║     ██╔══██║██╔══██╗    ██║  ██║██╔══██╗
+╚██████╔╝███████║╚██████╗██║  ██║██║  ██║    ██████╔╝██████╔╝
+ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═════╝ ╚═════╝ 
+
+
+"""
 
 
 
 def repl(engine: DatabaseEngine, prompt_session: None | PromptSession = None ):
+
     welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there is 1 table: users \n 
 Supported: SELECT ... FROM users [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+
+Suggestion for first query: SELECT * FROM users;
 
 exit  - exit program
 quit  - same as exit
 clear - clear the terminal text
                       """
+    print(logo)
     print(welcome_msg)
     while True:
         try:
@@ -112,7 +127,7 @@ def render_result(result: QueryResult):
     Formats and prints query results in an ASCII table.
     """
     if result.error:
-        print(result.error)
+        print("ERROR: " + str(result.error))
         return
 
 
