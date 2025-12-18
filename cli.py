@@ -9,6 +9,15 @@ from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.styles import Style
 from prompt_toolkit import PromptSession
 
+import os
+import sys
+
+def clear_screen():
+    if sys.platform == "win32":
+        os.system("cls")
+    else:
+        os.system("clear")
+
 SQL_STYLE = Style.from_dict({
     "keyword": "bold ansiblue",
     "operator": "ansiyellow",
@@ -114,6 +123,9 @@ clear - clear the terminal text
                 continue
             if sql.lower() in {"exit", "quit"}:
                 break
+            if sql.lower() == "clear":
+                clear_screen()
+                continue
 
             request = QueryRequest(sql=sql)
             result = engine.execute(request)

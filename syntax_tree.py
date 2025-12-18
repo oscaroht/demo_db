@@ -5,7 +5,7 @@ class ASTNode:
         # A helpful representation for debugging
         return f"{self.__class__.__name__}({', '.join(f'{k}={v!r}' for k, v in self.__dict__.items())})"
     
-    def display(self, level=0):
+    def display(self, level=0) -> str:
         indent = '  ' * level
         node_name = self.__class__.__name__
         

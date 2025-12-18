@@ -100,17 +100,10 @@ class Filter(Operator):
             if self.predicate.evaluate(row):
                 yield row
 
-        
-    def display_plan(self, level=0) -> str:
+    def display_plan(self, level=0):
         indent = '  ' * level
-        
-        left_op = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
-        right_op = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"Lit[{self.val2!r}]"
-        
-        output = [f"{indent}* Filter (Condition: {left_op} {self.comparison_function.__name__} {right_op})"]
-        if self.parent:
-            output.append(self.parent.display_plan(level + 1))
-            
+        output = [f"{indent}* Filter (Condition: {self.predicate})"]
+        output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
     def get_output_schema_names(self) -> List[str]:
@@ -227,13 +220,11 @@ class Sorter(Operator):
         self.parent = parent
         
     def next(self):
-        # 1. Read all input rows
         all_rows = list(self.parent.next())
         
         if not all_rows:
             return
 
-        # 2. Define the custom comparison function (cmp(a, b))
         def compare_rows(row_a, row_b):
             """
             Compares two rows based on all defined sort keys.
@@ -247,19 +238,14 @@ class Sorter(Operator):
                 val_b = row_b[index]
 
                 if val_a < val_b:
-                    # ASC: a comes before b (-1). DESC: b comes before a (1).
                     return -1 if not is_descending else 1
                 
                 if val_a > val_b:
-                    # ASC: b comes before a (1). DESC: a comes before b (-1).
                     return 1 if not is_descending else -1
                 
-                # If values are equal, continue to the next sort key
                 
             return 0 # All sort keys were equal
 
-        # 3. Sort the rows using the custom comparator
-        # cmp_to_key converts the old cmp function (compare_rows) into a key function
         sorted_rows = sorted(
             all_rows,
             key=cmp_to_key(compare_rows)
@@ -485,7 +471,7 @@ class Aggregate:
         # 2. Format Aggregates
         agg_specs_str = ', '.join([
             f"{func}(Col[{idx}])" if idx != '*' else f"{func}(*)" 
-            for func, idx in self.aggregate_specs
+            for func, idx, is_distinct in self.aggregate_specs
         ])
         
         output = [f"{indent}* Aggregate {group_by_line}"]
