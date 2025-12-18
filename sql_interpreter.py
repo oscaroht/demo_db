@@ -25,6 +25,7 @@ class qtrans(StrEnum):
     DESC = 'DESC'
     ASC = 'ASC'
     FROM = 'FROM'
+    AS = 'AS'
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'
@@ -272,7 +273,7 @@ class Parser:
     def _parse_column_or_aggregate(self):
         """
         Parses a single column or aggregate function call.
-        (e.g., id, name, COUNT(*), MAX(price))
+        (e.g., id, name, COUNT(*), MAX(price), name as first_name)
         """
         
         current = self.stream.current()
@@ -293,11 +294,25 @@ class Parser:
                 argument = self._parse_identifier() # Column inside the aggregate
             
             self.stream.match(')')
-            return AggregateCall(function_name, argument=argument, is_distinct=is_distinct)
-            
-        return ColumnRef(name=self._parse_identifier())
+            aggcall = AggregateCall(function_name, argument=argument, is_distinct=is_distinct)
+            aggcall.alias = self._parse_alias()
+            return aggcall
+        
+        colref = ColumnRef(name=self._parse_identifier())
+        colref.alias = self._parse_alias()
+        
 
-    
+        return colref
+
+    def _parse_alias(self) -> None | str:
+        if self.stream.current() == 'AS':
+            self.stream.match('AS')
+            alias = self.stream.current()
+            self.stream.advance()
+            return alias
+
+
+
     def _parse_identifier(self):
         """Parse a table name or column name."""
         token = self.stream.current()

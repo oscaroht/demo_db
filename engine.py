@@ -1,5 +1,6 @@
 from re import error
 import traceback
+from operators import Operator
 
 import buffermanager
 from catalog import Catalog
@@ -15,20 +16,20 @@ class DatabaseEngine:
 
     def execute(self, request: QueryRequest) -> QueryResult:
         sql = request.sql
-        error_message = ''
+        tokens = []
+        ast_root = None
+        query_plan_root = None
         try:
             if sql[-1] != ';':
                 sql += ';'
             tokens = tokenize(sql)
-            error_message += str(tokens) + '\n'
             stream = TokenStream(tokens)
             parser = Parser(stream) 
             ast_root = parser.parse()
-            error_message += ast_root.display() + '\n'
 
             planner = QueryPlanner(self.catalog, self.buffer_manager)
-            query_plan_root = planner.plan_query(ast_root)
-            error_message += query_plan_root.display_plan()
+            query_plan_root: Operator = planner.plan_query(ast_root)
+            # error_message += query_plan_root.display_plan()
 
             rows = list(query_plan_root.next())
 
@@ -36,13 +37,19 @@ class DatabaseEngine:
                 columns=query_plan_root.get_output_schema_names(),
                 rows=rows,
                 sql=sql,
+                tokens=tokens,
+                ast=ast_root,
+                query_plan=query_plan_root,
                 rowcount=len(rows)
             )
 
-        except Exception as e:
+        except Exception:
             return QueryResult(
                 columns=[],
                 rows=[],
                 sql=sql,
-                error=error_message + '\n' + traceback.format_exc(),
+                tokens=tokens,
+                ast=ast_root,
+                query_plan=query_plan_root,
+                error=traceback.format_exc(),
             )

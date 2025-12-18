@@ -48,8 +48,9 @@ class SelectStatement(ASTNode):
 
 class ColumnRef(ASTNode):
     """Represents a column name reference."""
-    def __init__(self, name):
+    def __init__(self, name, alias=None):
         self.name = name.lower()
+        self.alias = alias
 
 class Literal(ASTNode):
     """Represents a constant value (number, string)."""
@@ -97,7 +98,8 @@ class GroupByClause(ASTNode):
         self.columns = columns # List of ColumnRef nodes
 class AggregateCall(ASTNode):
     """Represents an aggregate function call (e.g., COUNT(*), MAX(col))."""
-    def __init__(self, function_name, argument=None, is_distinct=False):
+    def __init__(self, function_name, argument=None, is_distinct=False, alias=None):
         self.function_name = function_name # String (e.g., 'COUNT', 'MAX')
         self.argument = argument           # ColumnRef or '*'
         self.is_distinct = is_distinct
+        self.alias = alias

@@ -142,10 +142,15 @@ def render_result(result: QueryResult):
         print("ERROR: " + str(result.error))
         return
 
-
     query_string = result.sql  # destructure to reuse old code
     columns = result.columns
     results = result.rows
+
+    print(f"AST")
+    print(result.ast.display())
+
+    print("Query Plan")
+    print(result.query_plan.display_plan())
 
     print("\n" + "="*80)
     print(f"QUERY: {query_string}")

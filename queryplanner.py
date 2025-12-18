@@ -155,7 +155,8 @@ class QueryPlanner:
             if isinstance(col, ColumnRef):
                 idx = input_schema.index(col.name)
                 indices.append(idx)
-                names.append(col.name)
+                col_name = col.alias if col.alias else col.name
+                names.append(col_name)
 
             elif isinstance(col, AggregateCall):
                 dist = 'DISTINCT ' if col.is_distinct else ''
@@ -166,7 +167,8 @@ class QueryPlanner:
 
                 idx = input_schema.index(name)
                 indices.append(idx)
-                names.append(name)
+                col_name = col.alias if col.alias else name
+                names.append(col_name)
 
             elif isinstance(col, Literal):
                 raise NotImplementedError("Literal SELECT items not supported")
