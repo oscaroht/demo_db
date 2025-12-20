@@ -1,4 +1,4 @@
-from operators import BaseIterator, Filter, LogicalFilter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate
+from operators import BaseIterator, Filter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate
 
 class MockParent:
     """A dummy iterator to feed fixed data into the operators."""

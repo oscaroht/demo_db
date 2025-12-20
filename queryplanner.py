@@ -14,10 +14,8 @@ from operators import (
     Projection,
     Sorter,
     Limit,
-    LogicalFilter,
     Aggregate,
     Distinct,
-    Predicate,
     ComparisonPredicate,
     LogicalPredicate
 )

@@ -62,6 +62,7 @@ logical_operators = {
 class LogicalPredicate(Predicate):
     def __init__(self, op: str, left: Predicate, right: Predicate):
         self.func = logical_operators[op]
+        self.op = op
         self.left = left
         self.right = right
 
@@ -106,82 +107,6 @@ class Filter(Operator):
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
-    def get_output_schema_names(self) -> List[str]:
-        return self.parent.get_output_schema_names()
-
-#
-#
-# class Filter(Operator):
-#     def __init__(self, comparison: str, parent: Operator, val1=None, val2=None, col_idx1=None, col_idx2=None):
-#         self.comparison_function = comparison_operators[comparison]
-#         self.val1, self.val2 = val1, val2
-#         self.col_idx1, self.col_idx2 = col_idx1, col_idx2
-#         self.parent = parent
-#
-#     def check(self, row):
-#         """Evaluates the condition for a single row based on indices/values."""
-#         x = self.val1 if self.col_idx1 is None else row[self.col_idx1]
-#         y = self.val2 if self.col_idx2 is None else row[self.col_idx2]
-#         return self.comparison_function(x, y)
-#
-#     def next(self):
-#         for row in self.parent.next():
-#             if self.check(row):
-#                 yield row
-#
-#     def display_plan(self, level=0) -> str:
-#         indent = '  ' * level
-#
-#         left_op = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
-#         right_op = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"Lit[{self.val2!r}]"
-#
-#         output = [f"{indent}* Filter (Condition: {left_op} {self.comparison_function.__name__} {right_op})"]
-#         if self.parent:
-#             output.append(self.parent.display_plan(level + 1))
-#
-#         return '\n'.join(output)
-#
-#     def get_output_schema_names(self) -> List[str]:
-#         return self.parent.get_output_schema_names()
-#
-class LogicalFilter(Operator):
-    def __init__(self, op, left_child, right_child, parent):
-        self.op = op
-        self.left = left_child
-        self.right = right_child
-        self.parent = parent
-
-    def check(self, row):
-        left_result = self.left.check(row)
-        right_result = self.right.check(row)
-        
-        if self.op == 'AND':
-            return left_result and right_result
-        elif self.op == 'OR':
-            return left_result or right_result
-        return False # Should not happen
-
-    def next(self):
-        """The logical operator iterates over the parent's result and applies the check."""
-        for row in self.parent.next():
-            if self.check(row):
-                yield row
-
-    def display_plan(self, level=0):
-        indent = '  ' * level
-        
-        output = [f"{indent}* LogicalFilter ({self.op})"]
-        
-        output.append(f"{indent}  Left Branch:")
-        output.append(self.left.display_plan(level + 2))
-        
-        output.append(f"{indent}  Right Branch:")
-        output.append(self.right.display_plan(level + 2))
-        
-        if self.parent:
-            output.append(self.parent.display_plan(level + 1)) 
-            
-        return '\n'.join(output)
     def get_output_schema_names(self) -> List[str]:
         return self.parent.get_output_schema_names()
 
