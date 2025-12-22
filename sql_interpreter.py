@@ -1,5 +1,7 @@
-from enum import StrEnum
-from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause
+from enum import StrEnum, auto
+from typing import Tuple, List
+from operators import Predicate
+from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef
 import re
 
 class qtype(StrEnum):
@@ -26,6 +28,8 @@ class qtrans(StrEnum):
     ASC = 'ASC'
     FROM = 'FROM'
     AS = 'AS'
+    JOIN = auto()
+    ON = auto()
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'
@@ -155,15 +159,12 @@ class Parser:
         if self.stream.current() == qtrans.DISTINCT:
             self.stream.match(qtrans.DISTINCT)
             is_distinct = True
+
+
         columns = self._parse_column_list()
-        
-        # ... (Parsing FROM and WHERE remains the same) ...
-        if self.stream.current() == 'FROM':
-            self.stream.match('FROM')
-            table_name = self._parse_identifier()
-        else:
-            raise SyntaxError("Expected 'FROM'.")
-        
+
+        from_clause = self._parse_from_clause()
+
         where_clause = None
         if self.stream.current() == qtrans.WHERE:
             self.stream.match(qtrans.WHERE)
@@ -191,22 +192,54 @@ class Parser:
             
         self.stream.match(qseparators.SEMICOLON)
         
-        return SelectStatement(columns, table_name, 
+        return SelectStatement(columns=columns, 
+                               from_clause=from_clause,
                                is_distinct=is_distinct,
                                where_clause=where_clause,
                                group_by_clause=group_by_clause, # Added to SelectStatement
                                order_by_clause=order_by_clause, 
                                limit_clause=limit_clause)
-    
-    def _parse_distinct(self):
-        """Parse """
+
+
+
+    def _parse_table_ref(self) -> TableRef:
+        name = self._parse_table_identifier()
+        alias = None
+
+        if self.stream.current() == qtrans.AS:
+            self.stream.match(qtrans.AS)
+            alias = self._parse_table_identifier()
+        # for now no implicait alias
+        # elif self.stream.current_is_identifier():
+            # implicit alias: "users u"
+            # alias = self._parse_identifier()
+
+        return TableRef(name, alias)
+
+
+    def _parse_from_clause(self) -> TableRef | Join:
+        self.stream.match(qtrans.FROM)
+
+        left: TableRef = self._parse_table_ref()
+
+        while self.stream.current() == qtrans.JOIN:
+            self.stream.match(qtrans.JOIN)
+            right = self._parse_table_ref()
+
+            self.stream.match(qtrans.ON)
+            condition = self._parse_logical_expression()
+
+            left = Join(left, right, condition)
+
+        return left
+
 
     def _parse_group_by(self):
         """Parses: col1, col2, ..."""
         group_columns = []
         while True:
             # Grouping columns must be simple ColumnRef nodes
-            col_ref = ColumnRef(name=self._parse_identifier())
+            col_ref = ColumnRef(self._parse_column_identifier())
             group_columns.append(col_ref)
             
             if self.stream.current() == qseparators.COMMA:
@@ -291,14 +324,14 @@ class Parser:
             if self.stream.current() == '*':
                 argument = self.stream.match('*')
             else:
-                argument = self._parse_identifier() # Column inside the aggregate
+                argument = self._parse_column_identifier() # Column inside the aggregate
             
             self.stream.match(')')
             aggcall = AggregateCall(function_name, argument=argument, is_distinct=is_distinct)
             aggcall.alias = self._parse_alias()
             return aggcall
         
-        colref = ColumnRef(name=self._parse_identifier())
+        colref = ColumnRef(name=self._parse_column_identifier())
         colref.alias = self._parse_alias()
         
 
@@ -311,22 +344,30 @@ class Parser:
             self.stream.advance()
             return alias
 
-
-
-    def _parse_identifier(self):
-        """Parse a table name or column name."""
+    def _parse_table_identifier(self) -> str:
+        """Parse a table name."""
         token = self.stream.current()
         if token is None:
             raise SyntaxError("Expected an identifier, got end of stream.")
-        
         self.stream.advance()
         return token
 
 
-    # --- Recursive Descent for WHERE Clause Logic ---
-    # Following the precedence rule (AND > OR)
+    def _parse_column_identifier(self) -> Tuple[None | str, str]:
+        """Parse a table name or column name."""
+        token = self.stream.current()
+        if token is None:
+            raise SyntaxError("Expected an identifier, got end of stream.")
+        if '.' in token:
+            parts: List[str] = token.split('.')
+            if len(parts) > 2:
+                raise SyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
+            return parts[0], parts[1]
+        
+        self.stream.advance()
+        return None, token
 
-    def _parse_logical_expression(self):
+    def _parse_logical_expression(self) -> Comparison | LogicalExpression:
         """
         Handles OR conditions (Lowest Precedence).
         <LogicalExpression> -> <AndExpression> ( OR <AndExpression> )*
@@ -340,7 +381,7 @@ class Parser:
             
         return left_node
 
-    def _parse_and_expression(self):
+    def _parse_and_expression(self) -> Comparison | LogicalExpression:
         """
         Handles AND conditions (Higher Precedence).
         <AndExpression> -> <Comparison> ( AND <Comparison> )*
@@ -351,10 +392,9 @@ class Parser:
             op = self.stream.match(qtrans.AND)
             right_node = self._parse_comparison()
             left_node = LogicalExpression(op, left_node, right_node)
-            
         return left_node
 
-    def _parse_comparison(self):
+    def _parse_comparison(self) -> Comparison | LogicalExpression:
         """
         Handles simple comparisons or parenthesized expressions.
         <Comparison> -> <Operand> <Operator> <Operand> | ( <LogicalExpression> )
@@ -381,7 +421,7 @@ class Parser:
         raise SyntaxError(f"Expected comparison operator or '(' at: {current}")
 
 
-    def _parse_operand(self):
+    def _parse_operand(self) -> ColumnRef | Literal:
         """
         Parses a single operand: ColumnRef or Literal value.
         """
@@ -407,7 +447,7 @@ class Parser:
             return Literal(float(token))
         
         # Otherwise, assume it's a Column Reference (identifier)
-        return ColumnRef(name=self._parse_identifier())
+        return ColumnRef(name=self._parse_column_identifier())
 
 
 

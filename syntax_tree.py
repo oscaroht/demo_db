@@ -1,3 +1,4 @@
+ 
 
 class ASTNode:
     """Base class for all AST nodes."""
@@ -35,20 +36,17 @@ class ASTNode:
                 output.append(f"{field_indent}{name}: {value!r}")
         return '\n'.join(output)
 
-class SelectStatement(ASTNode):
-    """Represents the entire SELECT query."""
-    def __init__(self, columns, table, where_clause=None, is_distinct=False, order_by_clause=None, limit_clause=None, group_by_clause=None):
-        self.columns = columns        # List of ColumnRef or AggregateCall nodes
-        self.table = table            # String: table name
-        self.where_clause = where_clause  # Logical condition AST node
-        self.group_by_clause = group_by_clause
-        self.is_distinct = is_distinct
-        self.order_by_clause = order_by_clause
-        self.limit_clause = limit_clause
+
+
+class TableRef(ASTNode):
+    def __init__(self, name: str, alias: None | str =None):
+        self.name = name.lower()
+        self.alias = alias
 
 class ColumnRef(ASTNode):
     """Represents a column name reference."""
-    def __init__(self, name, alias=None):
+    def __init__(self, table: None | str, name: str, alias: None | str = None):
+        self.table = table.lower() if isinstance(table, str) else table
         self.name = name.lower()
         self.alias = alias
 
@@ -85,11 +83,8 @@ class BinaryOp(ASTNode):
         self.left = left  # Left-hand side AST node
         self.right = right # Right-hand side AST node
 
-# Comparison nodes (used in WHERE clauses)
 class Comparison(BinaryOp):
     pass
-
-# Logical nodes (used to combine comparisons in WHERE)
 class LogicalExpression(BinaryOp):
     pass
 class GroupByClause(ASTNode):
@@ -103,3 +98,21 @@ class AggregateCall(ASTNode):
         self.argument = argument           # ColumnRef or '*'
         self.is_distinct = is_distinct
         self.alias = alias
+ 
+class Join(ASTNode):
+    def __init__(self, left: TableRef | str, right: TableRef | str, condition: BinaryOp):
+        self.left = left
+        self.right = right
+        self.condition = condition
+
+
+class SelectStatement(ASTNode):
+    """Represents the entire SELECT query."""
+    def __init__(self, columns, from_clause: TableRef | Join, where_clause: None | BinaryOp = None, is_distinct=False, order_by_clause: None | OrderByClause = None, limit_clause: None | LimitClause =None, group_by_clause=None):
+        self.columns = columns        # List of ColumnRef or AggregateCall nodes
+        self.from_clause = from_clause
+        self.where_clause = where_clause  # Logical condition AST node
+        self.group_by_clause = group_by_clause
+        self.is_distinct = is_distinct
+        self.order_by_clause = order_by_clause
+        self.limit_clause = limit_clause

@@ -7,6 +7,7 @@ from syntax_tree import (
     Literal,
     ColumnRef,
     AggregateCall,
+    Join
 )
 from operators import (
     Filter,
@@ -17,7 +18,8 @@ from operators import (
     Aggregate,
     Distinct,
     ComparisonPredicate,
-    LogicalPredicate
+    LogicalPredicate,
+    JoinOperator
 )
 from catalog import Catalog
 

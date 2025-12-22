@@ -410,5 +410,33 @@ class Aggregate:
     def get_output_schema_names(self) -> List[str]:
         return self.output_names
 
+class JoinOperator(Operator):
+    def __init__(self, left, right, predicate: Predicate):
+        self.left = left
+        self.right = right
+        self.predicate = predicate
+
+        self._right_rows = None
+
+    def next(self):
+        if self._right_rows is None:
+            self._right_rows = list(self.right.next())
+
+        for left_row in self.left.next():
+            for right_row in self._right_rows:
+                row = left_row + right_row
+                if self.predicate.evaluate(row):
+                    yield row
+
+    def get_output_schema_names(self):
+        return self.left.get_output_schema_names() + self.right.get_output_schema_names()
+
+    def display_plan(self, level=0):
+        indent = "  " * level
+        out = [f"{indent}* Join"]
+        out.append(self.left.display_plan(level + 1))
+        out.append(self.right.display_plan(level + 1))
+        return "\n".join(out)
+
 if __name__ == '__main__':
     pass
