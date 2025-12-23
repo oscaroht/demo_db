@@ -36,17 +36,14 @@ class QueryPlanner:
         return self._plan_select(ast_root)
 
     def _plan_select(self, stmt: SelectStatement):
-        table = stmt.table
+        plan = self._plan_from(stmt.from_clause)
 
         # 1. Table scan
-        data_gen = self.buffer_manager.get_data_generator(table)
-        plan = BaseIterator(table, data_gen, self.catalog)
+
 
         # 2. WHERE
         if stmt.where_clause:
-            #plan = self._plan_where(stmt.where_clause, plan, table)
-            predicate = self._plan_where(stmt.where_clause, table)
-            plan = Filter(predicate, plan)
+            plan = self._plan_where(stmt.where_clause, plan)
 
         # 3. AGGREGATION / GROUP BY
         aggregate_specs = self._extract_aggregate_specs(stmt.columns, table)
@@ -83,31 +80,86 @@ class QueryPlanner:
 
         return plan
 
-    def _plan_where(self, ast_node, table_name) -> ComparisonPredicate | LogicalPredicate:
-        if isinstance(ast_node, Comparison):
-            return self._build_predicate(ast_node, table_name)
+    def _plan_where(self, ast_node, plan) -> Filter:
+        input_schema = plan.get_output_schema_names()
+        predicate = self._build_predicate(ast_node, input_schema)
+        return Filter(predicate, plan)
 
-        if isinstance(ast_node, LogicalExpression):
-            left = self._plan_where(ast_node.left, table_name)
-            right = self._plan_where(ast_node.right, table_name)
-            return LogicalPredicate(ast_node.op, left, right)
-        raise NotImplementedError(f"AST node {ast_node} found in where clause.")
 
-    def _build_predicate(self, cmp: Comparison, table) -> ComparisonPredicate:
+    def _build_predicate(self, expr, schema):
+        if isinstance(expr, Comparison):
+            return self._build_comparison_predicate(expr, schema)
+
+        if isinstance(expr, LogicalExpression):
+            left = self._build_predicate(expr.left, schema)
+            right = self._build_predicate(expr.right, schema)
+            return LogicalPredicate(expr.op, left, right)
+
+        raise TypeError(expr)
+
+    def _build_comparison_predicate(self, cmp, schema):
         def resolve(operand):
             if isinstance(operand, Literal):
                 return operand.value, None
+
             if isinstance(operand, ColumnRef):
-                idx = self.catalog.get_column_index(table, operand.name)
-                if idx is None:
-                    raise SyntaxError(f"{operand} not column in table {table}" )
+                if operand.table:
+                    name = f"{operand.table}.{operand.name}"
+                else:
+                    name = operand.name
+
+                try:
+                    idx = schema.index(name)
+                except ValueError:
+                    raise SemanticError(f"Unknown column: {name}")
+
                 return None, idx
-            raise TypeError(type(operand))
+
+            raise TypeError(operand)
 
         v1, i1 = resolve(cmp.left)
         v2, i2 = resolve(cmp.right)
 
         return ComparisonPredicate(cmp.op, v1, v2, i1, i2)
+
+    def _plan_from(self, ast_node: ASTNode):
+        while isinstance(ast_node, Join):
+            self._plan_join(ast_node)
+
+        data_gen = self.buffer_manager.get_data_generator(table)
+        plan = BaseIterator(table, data_gen, self.catalog)
+
+
+    def _plan_join(self, join_ast: Join) -> JoinOperator:
+        left_plan = self._plan_from(join_ast.left)
+        right_plan = self._plan_from(join_ast.right)
+
+        # Combined schema
+        left_schema = left_plan.get_output_schema_names()
+        right_schema = right_plan.get_output_schema_names()
+        combined_schema = left_schema + right_schema
+
+        # Plan ON condition using combined schema
+        predicate = self._plan_join_condition(
+            join_ast.condition,
+            combined_schema,
+        )
+
+        return JoinOperator(left_plan, right_plan, predicate)
+
+
+    def _plan_join_condition(self, expr, schema) -> ComparisonPredicate | LogicalPredicate:
+        if isinstance(expr, Comparison):
+            return self._build_predicate(expr, schema)
+
+        if isinstance(expr, LogicalExpression):
+            left = self._plan_join_condition(expr.left, schema)
+            right = self._plan_join_condition(expr.right, schema)
+            return LogicalPredicate(expr.op, left, right)
+
+        raise TypeError(expr)
+
+
 
     def _extract_aggregate_specs(self, columns, table):
         specs = []

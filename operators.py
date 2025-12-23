@@ -422,6 +422,7 @@ class JoinOperator(Operator):
         if self._right_rows is None:
             self._right_rows = list(self.right.next())
 
+        # Linear quadratic join for now. Will be upgraded to a better performing join once the parser, ast, planner can handle joins
         for left_row in self.left.next():
             for right_row in self._right_rows:
                 row = left_row + right_row
