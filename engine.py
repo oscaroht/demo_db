@@ -2,7 +2,6 @@ from re import error
 import traceback
 from operators import Operator
 
-import buffermanager
 from catalog import Catalog
 from request import QueryRequest
 from result import QueryResult

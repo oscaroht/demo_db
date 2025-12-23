@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 
 from syntax_tree import (
     ASTNode,
@@ -6,6 +7,7 @@ from syntax_tree import (
     Comparison,
     Literal,
     ColumnRef,
+    TableRef,
     AggregateCall,
     Join
 )
@@ -24,6 +26,14 @@ from operators import (
 from catalog import Catalog
 
 
+@dataclass
+class AggregateSpec:
+    function: str
+    arg_index: int | None  # None for COUNT(*)
+    is_distinct: bool
+    output_name: str
+
+
 class QueryPlanner:
     def __init__(self, catalog: Catalog, buffer_manager):
         self.catalog = catalog
@@ -38,39 +48,23 @@ class QueryPlanner:
     def _plan_select(self, stmt: SelectStatement):
         plan = self._plan_from(stmt.from_clause)
 
-        # 1. Table scan
-
-
-        # 2. WHERE
         if stmt.where_clause:
             plan = self._plan_where(stmt.where_clause, plan)
 
-        # 3. AGGREGATION / GROUP BY
-        aggregate_specs = self._extract_aggregate_specs(stmt.columns, table)
-        if aggregate_specs or stmt.group_by_clause:
-            group_key_indices = (
-                self._resolve_group_keys(stmt.group_by_clause, table)
-                if stmt.group_by_clause
-                else []
-            )
+        if stmt.group_by_clause:
+            input_schema = plan.get_output_schema_names()
+            group_keys = self._resolve_group_keys(stmt.group_by_clause, input_schema)
+            aggregates = self._extract_aggregate_specs(stmt.columns, input_schema)
+            plan = Aggregate(plan, group_keys, aggregates)
 
-            plan = Aggregate(
-                group_key_indices=group_key_indices,
-                aggregate_specs=aggregate_specs,
-                parent=plan,
-            )
-
-        # 4. DISTINCT 
         if stmt.is_distinct and not stmt.group_by_clause:  #  distinct has no affect in combination with a group by clause (except COUNT(DISTINCT .))
             plan = self._plan_projection(stmt.columns, plan)
             schema = plan.get_output_schema_names()
             plan = Distinct(list(range(len(schema))), plan)        
 
-        # 5. ORDER BY
         if stmt.order_by_clause:
             plan = self._plan_order_by(stmt.order_by_clause, plan)
 
-        # 6. LIMIT
         if stmt.limit_clause:
             plan = Limit(stmt.limit_clause.count, plan)
 
@@ -122,13 +116,33 @@ class QueryPlanner:
 
         return ComparisonPredicate(cmp.op, v1, v2, i1, i2)
 
-    def _plan_from(self, ast_node: ASTNode):
-        while isinstance(ast_node, Join):
-            self._plan_join(ast_node)
 
-        data_gen = self.buffer_manager.get_data_generator(table)
-        plan = BaseIterator(table, data_gen, self.catalog)
+    def _build_base_iterator(self, table: TableRef):
+        data_generator = self.buffer_manager.get_data_generator(table.name)
+        return BaseIterator(
+            table.name,
+            data_generator,
+            self.catalog
+        )
 
+    def _plan_from(self, node):
+        if isinstance(node, TableRef):
+            return self._build_base_iterator(node)
+
+        if isinstance(node, Join):
+            left_plan = self._plan_from(node.left)
+            right_plan = self._plan_from(node.right)
+
+            schema = (
+                left_plan.get_output_schema_names()
+                + right_plan.get_output_schema_names()
+            )
+
+            predicate = self._build_predicate(node.condition, schema)
+
+            return JoinOperator(left_plan, right_plan, predicate)
+
+        raise TypeError(node)
 
     def _plan_join(self, join_ast: Join) -> JoinOperator:
         left_plan = self._plan_from(join_ast.left)
@@ -161,16 +175,41 @@ class QueryPlanner:
 
 
 
-    def _extract_aggregate_specs(self, columns, table):
+    def _extract_aggregate_specs(self, columns, input_schema):
         specs = []
+
         for col in columns:
-            if isinstance(col, AggregateCall):
-                if col.argument == "*":
-                    specs.append((col.function_name, "*", col.is_distinct))
-                else:
-                    idx = self.catalog.get_column_index(table, col.argument)
-                    specs.append((col.function_name, idx, col.is_distinct))
+            if not isinstance(col, AggregateCall):
+                continue
+
+            if col.argument == "*":
+                arg_index = None
+            else:
+                col_name = self._resolve_column_name(col.argument, input_schema)
+                arg_index = input_schema.index(col_name)
+
+            output_name = (
+                col.alias
+                if col.alias
+                else self._default_aggregate_name(col)
+            )
+
+            specs.append(
+                AggregateSpec(
+                    function=col.function_name,
+                    arg_index=arg_index,
+                    is_distinct=col.is_distinct,
+                    output_name=output_name,
+                )
+            )
+
         return specs
+
+    def _default_aggregate_name(self, agg: AggregateCall) -> str:
+        if agg.argument == "*":
+            return f"{agg.function_name}(*)"
+        return f"{agg.function_name}({agg.argument.name})"
+
 
     def _resolve_group_keys(self, group_by_clause, table):
         return [self.catalog.get_column_index(table, col.name) for col in group_by_clause.columns]

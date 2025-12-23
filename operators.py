@@ -30,7 +30,7 @@ class BaseIterator(Operator):
         self.table_name = table_name
         self.data_generator = data_generator
         self.catalog = catalog
-    
+
     def next(self):
         """Yields all rows from the table source."""
         for row in self.data_generator():

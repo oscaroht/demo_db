@@ -12,8 +12,10 @@ table_data = {"users":[
     (4, 'Dave', 40, 'LA', 70000),
     (5, 'Eve', 19, 'BOS', 30000),
     (6, 'Fay', 22, 'SF', 45000),
-    (7, 'Grace', 30, 'NY', 80000),
-]}
+    (7, 'Grace', 30, 'NY', 80000)],
+    "contracts": [(1, 1, '2025-01-01', '2027-12-31'),
+                  (2, 2, '2024-01-01', '2027-07-01'),]
+}
 
 class MockBufferManager:
     def __init__(self, table_data_map: dict):
@@ -40,7 +42,8 @@ mock_schema = {
         'age': 2,
         'city': 3,
         'salary': 4
-    }
+    },
+        'contracts': {'id': 0, 'employee_id': 1, 'start_date': 2, 'end_date': 3}
 }
 mock_catalog = Catalog(mock_schema)
 mock_buffer_manager = MockBufferManager(table_data)

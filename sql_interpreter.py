@@ -239,7 +239,7 @@ class Parser:
         group_columns = []
         while True:
             # Grouping columns must be simple ColumnRef nodes
-            col_ref = ColumnRef(self._parse_column_identifier())
+            col_ref = ColumnRef(*self._parse_column_identifier())
             group_columns.append(col_ref)
             
             if self.stream.current() == qseparators.COMMA:
@@ -288,7 +288,7 @@ class Parser:
         
         # Check for SELECT *
         if self.stream.current() == '*':
-            columns.append(ColumnRef(name='*'))
+            columns.append(ColumnRef(table=None, name='*'))
             self.stream.advance()
         else:
             # Parse one or more columns/aggregates separated by commas
@@ -331,7 +331,9 @@ class Parser:
             aggcall.alias = self._parse_alias()
             return aggcall
         
-        colref = ColumnRef(name=self._parse_column_identifier())
+        table_and_col_name = self._parse_column_identifier()
+        print(table_and_col_name)
+        colref = ColumnRef(*table_and_col_name)
         colref.alias = self._parse_alias()
         
 
@@ -447,7 +449,7 @@ class Parser:
             return Literal(float(token))
         
         # Otherwise, assume it's a Column Reference (identifier)
-        return ColumnRef(name=self._parse_column_identifier())
+        return ColumnRef(*self._parse_column_identifier())
 
 
 
