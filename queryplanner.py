@@ -219,42 +219,38 @@ class QueryPlanner:
 
     def _extract_aggregate_specs(self, columns, input_schema):
         specs = []
-
         for col in columns:
-            if not isinstance(col, AggregateCall):
-                continue
-
-            if col.argument == "*":
+            if isinstance(col, AggregateCall):
                 arg_index = None
-            else:
-                col_name = self._resolve_column_name(col.argument, input_schema)
-                arg_index = input_schema.index(col_name)
+                if col.argument != "*":
+                    # col.argument is likely a ColumnRef; resolve it to an index
+                    arg_index = self._resolve_column_index(col.argument, input_schema)
+                
+                # Generate the internal FQN name for the aggregate column
+                # This ensures the Projection can find it later
+                dist = 'DISTINCT ' if col.is_distinct else ''
+                arg_name = col.argument.name if col.argument != "*" else "*"
+                output_name = f"{col.function_name}({dist}{arg_name})"
 
-            output_name = (
-                col.alias
-                if col.alias
-                else self._default_aggregate_name(col)
-            )
-
-            specs.append(
-                AggregateSpec(
+                specs.append(AggregateSpec(
                     function=col.function_name,
                     arg_index=arg_index,
                     is_distinct=col.is_distinct,
-                    output_name=output_name,
-                )
-            )
-
-        return specs
+                    output_name=output_name
+                ))
+        return specs    
 
     def _default_aggregate_name(self, agg: AggregateCall) -> str:
         if agg.argument == "*":
             return f"{agg.function_name}(*)"
         return f"{agg.function_name}({agg.argument.name})"
 
-
-    def _resolve_group_keys(self, group_by_clause, table):
-        return [self.catalog.get_column_index(table, col.name) for col in group_by_clause.columns]
+    def _resolve_group_keys(self, group_by_clause, input_schema):
+        group_indices = []
+        for col in group_by_clause.columns:
+            idx = self._resolve_column_index(col, input_schema)
+            group_indices.append(idx)
+        return group_indices    
 
     def _plan_order_by(self, order_by_clause, plan):
         schema = plan.get_output_schema_names()

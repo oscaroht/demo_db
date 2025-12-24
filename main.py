@@ -1,9 +1,6 @@
 from catalog import Catalog
-from request import QueryRequest
-from result import QueryResult
 from engine import DatabaseEngine
-from cli import repl, render_result
-import readline
+from cli import repl
 
 table_data = {"users":[
     (1, 'Alice', 30, 'NY', 60000),
@@ -14,7 +11,8 @@ table_data = {"users":[
     (6, 'Fay', 22, 'SF', 45000),
     (7, 'Grace', 30, 'NY', 80000)],
     "contracts": [(1, 1, '2025-01-01', '2027-12-31'),
-                  (2, 2, '2024-01-01', '2027-07-01'),]
+                  (2, 1, '2023-01-01', '2024-12-31'),
+                  (3, 2, '2024-01-01', '2027-07-01'),]
 }
 
 class MockBufferManager:

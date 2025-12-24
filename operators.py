@@ -342,8 +342,9 @@ class Aggregate:
         self.aggregate_specs = aggregate_specs # [(func_name, arg_index, is_distinct), ...]
         self.parent = parent
         parent_schema = parent.get_output_schema_names()
-        group_names = [parent_schema[i] for i in group_key_indices]
+        group_names = [parent_schema[i].split('.')[-1] for i in group_key_indices]
         agg_names = []
+        print(f"aggregate specs: {aggregate_specs}")
         for func, arg, is_distinct in aggregate_specs:
             dist = 'DISTINCT ' if is_distinct else ''
             if arg == '*':
@@ -429,6 +430,10 @@ class Aggregate:
         return '\n'.join(output)
 
     def get_output_schema_names(self) -> List[str]:
+        # Group keys (stripped) + Aggregates
+        # names = [n.split('.')[-1] for n in self.group_names] 
+        # names.extend([spec.output_name for spec in self.aggregate_specs])
+        # return names
         return self.output_names
 
 class JoinOperator(Operator):

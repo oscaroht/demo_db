@@ -1,4 +1,3 @@
-from re import error
 import traceback
 from operators import Operator
 
@@ -28,7 +27,6 @@ class DatabaseEngine:
 
             planner = QueryPlanner(self.catalog, self.buffer_manager)
             query_plan_root: Operator = planner.plan_query(ast_root)
-            # error_message += query_plan_root.display_plan()
 
             rows = list(query_plan_root.next())
 
