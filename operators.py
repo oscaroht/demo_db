@@ -45,6 +45,28 @@ class BaseIterator(Operator):
         # This assumes your Catalog has a method to retrieve column names.
         return self.catalog.get_all_column_names(self.table_name)
 
+
+class ScanOperator(Operator):
+    def __init__(self, table_name, data_generator, output_schema):
+        self.table_name = table_name
+        self.data_generator = data_generator
+        self.output_schema = output_schema
+
+    def next(self):
+        """Yields all rows from the table source."""
+        for row in self.data_generator():
+            yield row
+
+    def display_plan(self, level=0) -> str:
+        indent = '  ' * level
+        return f"{indent}* TableScan (Source: {self.table_name})"
+    
+    def get_output_schema_names(self) -> List[str]:
+        # The schema is the list of all column names in the source table.
+        # This assumes your Catalog has a method to retrieve column names.
+        return self.output_schema
+
+
 comparison_operators = {
     '=': lambda x, y: x == y,
     '!=': lambda x, y: x != y,
@@ -118,7 +140,6 @@ class Projection(Operator):
 
     def next(self):
         for row in self.parent.next():
-            # If the Projection is at the root, it handles printing/yielding the final result
             if '*' in self.column_indices:
                 yield row
             else:

@@ -360,14 +360,16 @@ class Parser:
         token = self.stream.current()
         if token is None:
             raise SyntaxError("Expected an identifier, got end of stream.")
+        table = None
+        column = token
         if '.' in token:
             parts: List[str] = token.split('.')
             if len(parts) > 2:
                 raise SyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
-            return parts[0], parts[1]
+            table, column = parts[0], parts[1]
         
         self.stream.advance()
-        return None, token
+        return table, column
 
     def _parse_logical_expression(self) -> Comparison | LogicalExpression:
         """

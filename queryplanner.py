@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import List
 
 from syntax_tree import (
     ASTNode,
@@ -13,7 +14,7 @@ from syntax_tree import (
 )
 from operators import (
     Filter,
-    BaseIterator,
+    ScanOperator,
     Projection,
     Sorter,
     Limit,
@@ -32,6 +33,14 @@ class AggregateSpec:
     arg_index: int | None  # None for COUNT(*)
     is_distinct: bool
     output_name: str
+
+
+class ParserError(Exception):
+    pass
+
+class AmbiguousColumnError(ParserError):
+    """Column name is present in multiple projections."""
+    pass
 
 
 class QueryPlanner:
@@ -93,20 +102,12 @@ class QueryPlanner:
 
     def _build_comparison_predicate(self, cmp, schema):
         def resolve(operand):
+            print(f"Resolve {operand}")
             if isinstance(operand, Literal):
                 return operand.value, None
 
             if isinstance(operand, ColumnRef):
-                if operand.table:
-                    name = f"{operand.table}.{operand.name}"
-                else:
-                    name = operand.name
-
-                try:
-                    idx = schema.index(name)
-                except ValueError:
-                    raise SemanticError(f"Unknown column: {name}")
-
+                idx = self._resolve_column_index(operand, schema)
                 return None, idx
 
             raise TypeError(operand)
@@ -116,14 +117,55 @@ class QueryPlanner:
 
         return ComparisonPredicate(cmp.op, v1, v2, i1, i2)
 
+    def _resolve_column_index(self, col_ref: ColumnRef, schema: List[str]) -> int:
+        """
+        Internal resolution using FQN (table.column).
+        """
+        target_table = col_ref.table
+        target_name = col_ref.name
+
+        # If the parser found a table prefix (e.g., users.id)
+        if target_table:
+            full_name = f"{target_table}.{target_name}"
+            if full_name in schema:
+                return schema.index(full_name)
+        
+        # If no table prefix was provided, we search for the column name.
+        # We still treat the internal schema as FQN (Table.Column).
+        matches = [i for i, col in enumerate(schema) if col.split('.')[-1] == target_name]
+
+        if not matches:
+            raise ValueError(f"Column '{target_name}' not found in schema: {schema}")
+        if len(matches) > 1:
+            raise ValueError(f"Ambiguous column '{target_name}'. Found in multiple tables: {[schema[i] for i in matches]}")
+
+        return matches[0]
 
     def _build_base_iterator(self, table: TableRef):
+        table_name = table.name
+        alias = table.alias or table.name
         data_generator = self.buffer_manager.get_data_generator(table.name)
-        return BaseIterator(
-            table.name,
-            data_generator,
-            self.catalog
+
+        columns = self.catalog.get_all_column_names(table_name)
+
+        schema = [
+            f"{alias}.{col}"
+            for col in columns
+        ]
+
+        return ScanOperator(
+            table_name=table_name,
+            data_generator=data_generator,
+            output_schema=schema,
         )
+
+    # def _build_base_iterator(self, table: TableRef):
+    #     data_generator = self.buffer_manager.get_data_generator(table.name)
+    #     return BaseIterator(
+    #         table.name,
+    #         data_generator,
+    #         self.catalog
+    #     )
 
     def _plan_from(self, node):
         if isinstance(node, TableRef):
@@ -234,8 +276,10 @@ class QueryPlanner:
 
     def _plan_projection(self, columns, plan):
         input_schema = plan.get_output_schema_names()
+        print(f"Projection input schema {input_schema}")
+        print(f"Projection columns {columns}")
 
-        # SELECT *
+        # Handle SELECT *
         if len(columns) == 1 and isinstance(columns[0], ColumnRef) and columns[0].name == "*":
             return Projection(list(range(len(input_schema))), input_schema, plan)
 
@@ -244,24 +288,24 @@ class QueryPlanner:
 
         for col in columns:
             if isinstance(col, ColumnRef):
-                idx = input_schema.index(col.name)
+                # Use the new resolver to find the correct index in a joined schema
+                idx = self._resolve_column_index(col, input_schema)
                 indices.append(idx)
+                # Use alias if provided, otherwise use the original column name
                 col_name = col.alias if col.alias else col.name
                 names.append(col_name)
 
             elif isinstance(col, AggregateCall):
+                # Existing aggregate logic, but ensure the argument is resolved correctly
                 dist = 'DISTINCT ' if col.is_distinct else ''
-                if col.argument == "*":
-                    name = f"{col.function_name}({dist}*)"
-                else:
-                    name = f"{col.function_name}({dist}{col.argument})"
-
+                # Logic for mapping aggregate output names back to schema
+                name = f"{col.function_name}({dist}{col.argument if col.argument == '*' else col.argument[1]})"
+                
+                if name not in input_schema:
+                    raise ValueError(f"Aggregate {name} not found in input schema {input_schema}")
+                
                 idx = input_schema.index(name)
                 indices.append(idx)
-                col_name = col.alias if col.alias else name
-                names.append(col_name)
-
-            elif isinstance(col, Literal):
-                raise NotImplementedError("Literal SELECT items not supported")
+                names.append(col.alias if col.alias else name)
 
         return Projection(indices, names, plan)
