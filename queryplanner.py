@@ -21,7 +21,7 @@ from operators import (
     Distinct,
     ComparisonPredicate,
     LogicalPredicate,
-    JoinOperator,
+    NestedLoopJoin,
     AggregateSpec
 )
 from catalog import Catalog
@@ -70,7 +70,8 @@ class QueryPlanner:
         if stmt.limit_clause:
             plan = Limit(stmt.limit_clause.count, plan)
 
-        plan = self._plan_projection(stmt.columns, plan)
+        if not stmt.is_distinct or stmt.group_by_clause:
+            plan = self._plan_projection(stmt.columns, plan)
 
         return plan
 
@@ -93,7 +94,6 @@ class QueryPlanner:
 
     def _build_comparison_predicate(self, cmp, schema):
         def resolve(operand):
-            print(f"Resolve {operand}")
             if isinstance(operand, Literal):
                 return operand.value, None
 
@@ -173,11 +173,11 @@ class QueryPlanner:
 
             predicate = self._build_predicate(node.condition, schema)
 
-            return JoinOperator(left_plan, right_plan, predicate)
+            return NestedLoopJoin(left_plan, right_plan, predicate)
 
         raise TypeError(node)
 
-    def _plan_join(self, join_ast: Join) -> JoinOperator:
+    def _plan_join(self, join_ast: Join) -> NestedLoopJoin:
         left_plan = self._plan_from(join_ast.left)
         right_plan = self._plan_from(join_ast.right)
 
@@ -192,7 +192,7 @@ class QueryPlanner:
             combined_schema,
         )
 
-        return JoinOperator(left_plan, right_plan, predicate)
+        return NestedLoopJoin(left_plan, right_plan, predicate)
 
 
     def _plan_join_condition(self, expr, schema) -> ComparisonPredicate | LogicalPredicate:
@@ -212,7 +212,7 @@ class QueryPlanner:
         specs = []
         for col in columns:
             if isinstance(col, AggregateCall):
-                arg_index = None
+                arg_index = "*"
                 if col.argument != "*":
                     arg_index = self._resolve_column_index(col.argument, input_schema)
                 
@@ -244,19 +244,23 @@ class QueryPlanner:
 
     def _plan_order_by(self, order_by_clause, plan):
         schema = plan.get_output_schema_names()
+        print(f"order by schema {schema}")
         name_to_index = {name: i for i, name in enumerate(schema)}
 
         sort_keys = []
         for item in order_by_clause.sort_items:
             if isinstance(item.column, AggregateCall):
-                name = f"{item.column.function_name}({item.column.argument.upper()})"
+                name = f"{item.column.function_name}({'*' if item.column == '*' else item.column.argument.name})"
+                colref = name
             else:
                 name = item.column.name
+                colref = item.column
 
-            if name not in name_to_index:
-                raise ValueError(f"ORDER BY column '{name}' not in output")
+            idx = self._resolve_column_index(colref, schema)
+            # if name not in name_to_index:
+            #     raise ValueError(f"ORDER BY column '{name}' not in output")
 
-            sort_keys.append((name_to_index[name], item.direction == "DESC"))
+            sort_keys.append((idx, item.direction == "DESC"))
 
         return Sorter(sort_keys, plan)
 
@@ -291,8 +295,9 @@ class QueryPlanner:
                     raise ValueError(f"Aggregate {name} not found in input schema {input_schema}")
                 
                 idx = input_schema.index(name)
-                indices.append(idx)                
-                display_name: str = col.argument.name if isinstance(col.argument, ColumnRef) else col.argument
-                names.append(col.alias if col.alias else display_name)
+                indices.append(idx)
+                # display_name: str = f"{col.function_name}({dist}{col.argument.name if isinstance(col.argument, ColumnRef) else col.argument})"
+                display_name = col.alias if col.alias else name
+                names.append(display_name)
 
-        return Projection(indices, input_schema, plan)
+        return Projection(indices, names, plan)

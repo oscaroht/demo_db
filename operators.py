@@ -57,7 +57,7 @@ class BaseIterator(Operator):
 
 
 class ScanOperator(Operator):
-    def __init__(self, table_name, data_generator, output_schema):
+    def __init__(self, table_name: str, data_generator, output_schema: List[str]):
         self.table_name = table_name
         self.data_generator = data_generator
         self.output_schema = output_schema
@@ -355,6 +355,7 @@ class Aggregate:
         group_names = [parent_schema[i].split('.')[-1] for i in group_key_indices]
         agg_names = [a.output_name for a in aggregate_specs]
         self.output_names = group_names + agg_names
+        print(f"Aggregate self.output_names: {self.output_names}")
 
     def next(self):
         # Dictionary to hold the state: 
@@ -440,7 +441,13 @@ class Aggregate:
         # return names
         return self.output_names
 
-class JoinOperator(Operator):
+class NestedLoopJoin(Operator):
+    """NestedLoopJoin retreives all right side rows to memory and then iterate though the left rows to validate the predicate
+
+    Pretty poor performance both memory and cpu. If it runs out of memory then there is currently no back up mechanism.
+    It is still useful because it can handle any type of predicate. Predicates such as left.id > right.id + 5 cannot be solved
+    with a hash join. 
+    """
     def __init__(self, left, right, predicate: Predicate):
         self.left = left
         self.right = right
@@ -452,7 +459,7 @@ class JoinOperator(Operator):
         if self._right_rows is None:
             self._right_rows = list(self.right.next())
 
-        # Linear quadratic join for now. Will be upgraded to a better performing join once the parser, ast, planner can handle joins
+        # Linear quadratic join :( it pains me to write this
         for left_row in self.left.next():
             for right_row in self._right_rows:
                 row = left_row + right_row

@@ -161,13 +161,9 @@ def render_result(result: QueryResult):
         print("="*80)
         return
 
-    # 1. Convert all data to strings (including column headers)
     string_results = [tuple(str(x) for x in row) for row in results]
     string_columns = [str(c) for c in columns]
 
-    print(f"Str columns: {string_columns}")
-
-    # 2. Determine max width for each column
     num_cols = len(string_columns)
     max_widths = [len(header) for header in string_columns]
 
@@ -175,24 +171,19 @@ def render_result(result: QueryResult):
         for i in range(num_cols):
             max_widths[i] = max(max_widths[i], len(row[i]))
 
-    # Add a small padding
     col_widths = [w + 2 for w in max_widths]
 
-    # 3. Print the header row
     header_line = ""
     for i in range(num_cols):
-        # Center-align the header text
         header_line += f"| {string_columns[i].center(col_widths[i] - 2)} "
     header_line += "|"
     
-    # 4. Print separator lines
     separator = "+" + "+".join("-" * w for w in col_widths) + "+"
 
     print(separator)
     print(header_line)
     print(separator)
 
-    # 5. Print data rows
     for row in string_results:
         row_line = ""
         for i in range(num_cols):
