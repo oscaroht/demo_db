@@ -1,10 +1,12 @@
-import traceback
 from operators import Operator
+import traceback
+from typing import List
 
 from catalog import Catalog
 from request import QueryRequest
 from result import QueryResult
 from queryplanner import QueryPlanner
+from schema import Schema
 from sql_interpreter import tokenize, TokenStream, Parser
 
 class DatabaseEngine:
@@ -30,8 +32,11 @@ class DatabaseEngine:
 
             rows = list(query_plan_root.next())
 
+            schema: Schema = query_plan_root.get_output_schema()
+            column_names: List[str] = schema.get_names()
+
             return QueryResult(
-                columns=query_plan_root.get_output_schema_names(),
+                columns=column_names,
                 rows=rows,
                 sql=sql,
                 tokens=tokens,

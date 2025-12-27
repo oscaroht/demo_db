@@ -1,40 +1,17 @@
-from typing import List
-
+from typing import List, Optional
 from syntax_tree import (
-    ASTNode,
-    SelectStatement,
-    LogicalExpression,
-    Comparison,
-    Literal,
-    ColumnRef,
-    TableRef,
-    AggregateCall,
-    Join
+    ASTNode, SelectStatement, LogicalExpression, Comparison,
+    Literal, ColumnRef, TableRef, AggregateCall, Join
 )
 from operators import (
-    Filter,
-    ScanOperator,
-    Projection,
-    Sorter,
-    Limit,
-    Aggregate,
-    Distinct,
-    ComparisonPredicate,
-    LogicalPredicate,
-    NestedLoopJoin,
+    Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
+    Distinct, ComparisonPredicate, LogicalPredicate, NestedLoopJoin,
     AggregateSpec
 )
 from catalog import Catalog
+from schema import ColumnInfo, Schema
 
-
-
-class ParserError(Exception):
-    pass
-
-class AmbiguousColumnError(ParserError):
-    """Column name is present in multiple projections."""
-    pass
-
+class ParserError(Exception): pass
 
 class QueryPlanner:
     def __init__(self, catalog: Catalog, buffer_manager):
@@ -44,260 +21,162 @@ class QueryPlanner:
     def plan_query(self, ast_root: ASTNode):
         if not isinstance(ast_root, SelectStatement):
             raise TypeError(f"Unsupported AST root: {type(ast_root)}")
-
         return self._plan_select(ast_root)
 
     def _plan_select(self, stmt: SelectStatement):
+        # 1. FROM & JOIN
         plan = self._plan_from(stmt.from_clause)
 
+        # 2. WHERE
         if stmt.where_clause:
-            plan = self._plan_where(stmt.where_clause, plan)
+            input_schema = plan.get_output_schema()
+            predicate = self._build_predicate(stmt.where_clause, input_schema)
+            plan = Filter(predicate, plan)
 
-        input_schema = plan.get_output_schema_names()
-        aggregates = self._extract_aggregate_specs(stmt.columns, input_schema)
-        if aggregates or stmt.group_by_clause:
-            group_keys = self._resolve_group_keys(stmt.group_by_clause, input_schema)
-            plan = Aggregate(group_keys, aggregates, plan)
+        # 3. GROUP BY & AGGREGATE
+        # Aggregates change the schema: Output = [Group Keys] + [Agg Results]
+        if stmt.group_by_clause or self._has_aggregates(stmt.columns):
+            plan = self._plan_aggregate(stmt, plan)
 
-        if stmt.is_distinct and not stmt.group_by_clause:  #  distinct has no affect in combination with a group by clause (except COUNT(DISTINCT .))
+        # 4. DISTINCT (Pre-projection)
+        if stmt.is_distinct and not stmt.group_by_clause:
             plan = self._plan_projection(stmt.columns, plan)
-            schema = plan.get_output_schema_names()
-            plan = Distinct(list(range(len(schema))), plan)        
+            schema = plan.get_output_schema()
+            plan = Distinct(list(range(len(schema.columns))), plan)        
 
+        # 5. ORDER BY
         if stmt.order_by_clause:
             plan = self._plan_order_by(stmt.order_by_clause, plan)
 
+        # 6. LIMIT
         if stmt.limit_clause:
             plan = Limit(stmt.limit_clause.count, plan)
 
-        if not stmt.is_distinct or stmt.group_by_clause:
+        # 7. FINAL PROJECTION (If not already handled by Distinct)
+        if not (stmt.is_distinct and not stmt.group_by_clause):
             plan = self._plan_projection(stmt.columns, plan)
 
         return plan
 
-    def _plan_where(self, ast_node, plan) -> Filter:
-        input_schema = plan.get_output_schema_names()
-        predicate = self._build_predicate(ast_node, input_schema)
-        return Filter(predicate, plan)
+    def _plan_from(self, node):
+        if isinstance(node, TableRef):
+            table_name = node.name
+            alias = node.alias or node.name
+            cols = self.catalog.get_all_column_names(table_name)
+            
+            # Create a Schema object immediately
+            schema = Schema([ColumnInfo(f"{alias}.{c}") for c in cols])
+            return ScanOperator(
+                table_name=table_name,
+                data_generator=self.buffer_manager.get_data_generator(table_name),
+                schema=schema
+            )
 
+        if isinstance(node, Join):
+            left = self._plan_from(node.left)
+            right = self._plan_from(node.right)
+            
+            # Concatenate schemas using the new Schema object logic
+            combined_schema = left.get_output_schema() + right.get_output_schema()
+            predicate = self._build_predicate(node.condition, combined_schema)
+            
+            return NestedLoopJoin(left, right, predicate)
 
-    def _build_predicate(self, expr, schema):
+        raise TypeError(f"Unknown FROM node: {type(node)}")
+
+    def _plan_aggregate(self, stmt: SelectStatement, plan):
+        input_schema = plan.get_output_schema()
+        
+        # Resolve group indices
+        group_indices = []
+        group_cols = []
+        if stmt.group_by_clause:
+            for col in stmt.group_by_clause.columns:
+                idx = input_schema.resolve(col.table, col.name)
+                group_indices.append(idx)
+                group_cols.append(input_schema.columns[idx])
+
+        # Extract aggregate specs and build output schema
+        specs = []
+        agg_cols = []
+        for col in stmt.columns:
+            if isinstance(col, AggregateCall):
+                arg_idx = None # For COUNT(*)
+                if col.argument != "*":
+                    arg_idx = input_schema.resolve(col.argument.table, col.argument.name)
+                
+                dist = 'DISTINCT ' if col.is_distinct else ''
+                arg_name = col.argument.name if col.argument != "*" else "*"
+                output_name = f"{col.function_name}({dist}{arg_name})"
+                
+                specs.append(AggregateSpec(col.function_name, arg_idx, col.is_distinct, output_name))
+                agg_cols.append(ColumnInfo(full_name=output_name, is_aggregate=True))
+
+        # The new schema for the output of the Aggregate Operator
+        output_schema = Schema(group_cols + agg_cols)
+        return Aggregate(group_indices, specs, output_schema, plan)
+
+    def _plan_projection(self, columns, plan):
+        input_schema = plan.get_output_schema()
+        projected_indices = []
+        projected_cols = []
+
+        for col in columns:
+            if isinstance(col, ColumnRef) and col.name == "*":
+                # ASTERISK EXPANSION
+                for i, info in enumerate(input_schema.columns):
+                    projected_indices.append(i)
+                    projected_cols.append(info)
+            
+            elif isinstance(col, (ColumnRef, AggregateCall)):
+                # Logic for both raw columns and pre-calculated aggregates is now the same
+                name = self._get_name_from_node(col)
+                idx = input_schema.resolve(getattr(col, 'table', None), name)
+                
+                projected_indices.append(idx)
+                # Apply alias to the new schema if provided
+                orig_col = input_schema.columns[idx]
+                projected_cols.append(ColumnInfo(orig_col.full_name, col.alias))
+
+        return Projection(projected_indices, Schema(projected_cols), plan)
+
+    def _plan_order_by(self, order_by_clause, plan):
+        schema = plan.get_output_schema()
+        sort_keys = []
+        for item in order_by_clause.sort_items:
+            name = self._get_name_from_node(item.column)
+            idx = schema.resolve(getattr(item.column, 'table', None), name)
+            sort_keys.append((idx, item.direction == "DESC"))
+        return Sorter(sort_keys, plan)
+
+    def _build_predicate(self, expr, schema: Schema):
         if isinstance(expr, Comparison):
-            return self._build_comparison_predicate(expr, schema)
+            v1, i1 = self._resolve_operand(expr.left, schema)
+            v2, i2 = self._resolve_operand(expr.right, schema)
+            return ComparisonPredicate(expr.op, v1, v2, i1, i2)
 
         if isinstance(expr, LogicalExpression):
             left = self._build_predicate(expr.left, schema)
             right = self._build_predicate(expr.right, schema)
             return LogicalPredicate(expr.op, left, right)
+        raise TypeError(f"Unsupported expression: {type(expr)}")
 
-        raise TypeError(expr)
+    def _resolve_operand(self, operand, schema: Schema):
+        if isinstance(operand, Literal):
+            return operand.value, None
+        if isinstance(operand, ColumnRef):
+            return None, schema.resolve(operand.table, operand.name)
+        raise TypeError(f"Unsupported operand: {type(operand)}")
 
-    def _build_comparison_predicate(self, cmp, schema):
-        def resolve(operand):
-            if isinstance(operand, Literal):
-                return operand.value, None
+    def _get_name_from_node(self, node) -> str:
+        """Helper to get the lookup name for a column or aggregate call."""
+        if isinstance(node, ColumnRef):
+            return node.name
+        if isinstance(node, AggregateCall):
+            dist = 'DISTINCT ' if node.is_distinct else ''
+            arg_name = node.argument.name if node.argument != "*" else "*"
+            return f"{node.function_name}({dist}{arg_name})"
+        return str(node)
 
-            if isinstance(operand, ColumnRef):
-                idx = self._resolve_column_index(operand, schema)
-                return None, idx
-
-            raise TypeError(operand)
-
-        v1, i1 = resolve(cmp.left)
-        v2, i2 = resolve(cmp.right)
-
-        return ComparisonPredicate(cmp.op, v1, v2, i1, i2)
-
-    def _resolve_column_index(self, col_ref: ColumnRef, schema: List[str]) -> int:
-        """
-        Internal resolution using FQN (table.column).
-        """
-        target_table = col_ref.table
-        target_name = col_ref.name
-
-        # If the parser found a table prefix (e.g., users.id)
-        if target_table:
-            full_name = f"{target_table}.{target_name}"
-            if full_name in schema:
-                return schema.index(full_name)
-        
-        # If no table prefix was provided, we search for the column name.
-        # We still treat the internal schema as FQN (Table.Column).
-        matches = [i for i, col in enumerate(schema) if col.split('.')[-1] == target_name]
-
-        if not matches:
-            raise ValueError(f"Column '{target_name}' not found in schema: {schema}")
-        if len(matches) > 1:
-            raise ValueError(f"Ambiguous column '{target_name}'. Found in multiple tables: {[schema[i] for i in matches]}")
-
-        return matches[0]
-
-    def _build_base_iterator(self, table: TableRef) -> ScanOperator:
-        table_name = table.name
-        alias = table.alias or table.name
-        data_generator = self.buffer_manager.get_data_generator(table.name)
-
-        columns = self.catalog.get_all_column_names(table_name)
-
-        schema = [
-            f"{alias}.{col}"
-            for col in columns
-        ]
-
-        return ScanOperator(
-            table_name=table_name,
-            data_generator=data_generator,
-            output_schema=schema,
-        )
-
-    # def _build_base_iterator(self, table: TableRef):
-    #     data_generator = self.buffer_manager.get_data_generator(table.name)
-    #     return BaseIterator(
-    #         table.name,
-    #         data_generator,
-    #         self.catalog
-    #     )
-
-    def _plan_from(self, node):
-        if isinstance(node, TableRef):
-            return self._build_base_iterator(node)
-
-        if isinstance(node, Join):
-            left_plan = self._plan_from(node.left)
-            right_plan = self._plan_from(node.right)
-
-            schema = (
-                left_plan.get_output_schema_names()
-                + right_plan.get_output_schema_names()
-            )
-
-            predicate = self._build_predicate(node.condition, schema)
-
-            return NestedLoopJoin(left_plan, right_plan, predicate)
-
-        raise TypeError(node)
-
-    def _plan_join(self, join_ast: Join) -> NestedLoopJoin:
-        left_plan = self._plan_from(join_ast.left)
-        right_plan = self._plan_from(join_ast.right)
-
-        # Combined schema
-        left_schema = left_plan.get_output_schema_names()
-        right_schema = right_plan.get_output_schema_names()
-        combined_schema = left_schema + right_schema
-
-        # Plan ON condition using combined schema
-        predicate = self._plan_join_condition(
-            join_ast.condition,
-            combined_schema,
-        )
-
-        return NestedLoopJoin(left_plan, right_plan, predicate)
-
-
-    def _plan_join_condition(self, expr, schema) -> ComparisonPredicate | LogicalPredicate:
-        if isinstance(expr, Comparison):
-            return self._build_predicate(expr, schema)
-
-        if isinstance(expr, LogicalExpression):
-            left = self._plan_join_condition(expr.left, schema)
-            right = self._plan_join_condition(expr.right, schema)
-            return LogicalPredicate(expr.op, left, right)
-
-        raise TypeError(expr)
-
-
-
-    def _extract_aggregate_specs(self, columns, input_schema):
-        specs = []
-        for col in columns:
-            if isinstance(col, AggregateCall):
-                arg_index = "*"
-                if col.argument != "*":
-                    arg_index = self._resolve_column_index(col.argument, input_schema)
-                
-                dist = 'DISTINCT ' if col.is_distinct else ''
-                arg_name = col.argument.name if col.argument != "*" else "*"
-                output_name = f"{col.function_name}({dist}{arg_name})"
-
-                specs.append(AggregateSpec(
-                    function=col.function_name,
-                    arg_index=arg_index,
-                    is_distinct=col.is_distinct,
-                    output_name=output_name
-                ))
-        return specs    
-
-    def _default_aggregate_name(self, agg: AggregateCall) -> str:
-        if agg.argument == "*":
-            return f"{agg.function_name}(*)"
-        return f"{agg.function_name}({agg.argument.name})"
-
-    def _resolve_group_keys(self, group_by_clause, input_schema) -> List[int]:
-        group_indices = []
-        if not group_by_clause:
-            return []
-        for col in group_by_clause.columns:
-            idx = self._resolve_column_index(col, input_schema)
-            group_indices.append(idx)
-        return group_indices    
-
-    def _plan_order_by(self, order_by_clause, plan):
-        schema = plan.get_output_schema_names()
-        print(f"order by schema {schema}")
-        name_to_index = {name: i for i, name in enumerate(schema)}
-
-        sort_keys = []
-        for item in order_by_clause.sort_items:
-            if isinstance(item.column, AggregateCall):
-                name = f"{item.column.function_name}({'*' if item.column == '*' else item.column.argument.name})"
-                colref = name
-            else:
-                name = item.column.name
-                colref = item.column
-
-            idx = self._resolve_column_index(colref, schema)
-            # if name not in name_to_index:
-            #     raise ValueError(f"ORDER BY column '{name}' not in output")
-
-            sort_keys.append((idx, item.direction == "DESC"))
-
-        return Sorter(sort_keys, plan)
-
-    def _plan_projection(self, columns, plan):
-        input_schema = plan.get_output_schema_names()
-        print(f"Projection input schema {input_schema}")
-        print(f"Projection columns {columns}")
-
-        # Handle SELECT *
-        if len(columns) == 1 and isinstance(columns[0], ColumnRef) and columns[0].name == "*":
-            return Projection(list(range(len(input_schema))), input_schema, plan)
-
-        indices = []
-        names = []
-
-        for col in columns:
-            if isinstance(col, ColumnRef):
-                # Use the new resolver to find the correct index in a joined schema
-                idx = self._resolve_column_index(col, input_schema)
-                indices.append(idx)
-                # Use alias if provided, otherwise use the original column name
-                col_name = col.alias if col.alias else col.name
-                names.append(col_name)
-
-            elif isinstance(col, AggregateCall):
-                # Existing aggregate logic, but ensure the argument is resolved correctly
-                dist = 'DISTINCT ' if col.is_distinct else ''
-                # Logic for mapping aggregate output names back to schema
-                name = f"{col.function_name}({dist}{col.argument if col.argument == '*' else col.argument.name})"
-                
-                if name not in input_schema:
-                    raise ValueError(f"Aggregate {name} not found in input schema {input_schema}")
-                
-                idx = input_schema.index(name)
-                indices.append(idx)
-                # display_name: str = f"{col.function_name}({dist}{col.argument.name if isinstance(col.argument, ColumnRef) else col.argument})"
-                display_name = col.alias if col.alias else name
-                names.append(display_name)
-
-        return Projection(indices, names, plan)
+    def _has_aggregates(self, columns) -> bool:
+        return any(isinstance(c, AggregateCall) for c in columns)

@@ -3,7 +3,6 @@
 class ASTNode:
     """Base class for all AST nodes."""
     def __repr__(self):
-        # A helpful representation for debugging
         return f"{self.__class__.__name__}({', '.join(f'{k}={v!r}' for k, v in self.__dict__.items())})"
     
     def display(self, level=0) -> str:

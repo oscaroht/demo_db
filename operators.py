@@ -2,7 +2,8 @@ import abc
 from typing import Generator, List, Any
 from functools import cmp_to_key
 from dataclasses import dataclass
-
+from typing import Generator, List, Any, Optional  # <--- Added Optional here
+from schema import Schema, ColumnInfo
 Row = tuple[Any, ...]
 
 
@@ -26,7 +27,7 @@ class Operator(abc.ABC):
         raise NotImplementedError
         
     @abc.abstractmethod
-    def get_output_schema_names(self) -> List[str]:
+    def get_output_schema(self) -> List[str]:
         """Returns the column names that this operator outputs."""
         raise NotImplementedError
 
@@ -34,48 +35,6 @@ class Predicate(abc.ABC):
     @abc.abstractmethod
     def evaluate(self, row) -> bool:
         pass
-
-class BaseIterator(Operator):
-    def __init__(self, table_name, data_generator, catalog):
-        self.table_name = table_name
-        self.data_generator = data_generator
-        self.catalog = catalog
-
-    def next(self):
-        """Yields all rows from the table source."""
-        for row in self.data_generator():
-            yield row
-
-    def display_plan(self, level=0) -> str:
-        indent = '  ' * level
-        return f"{indent}* TableScan (Source: {self.table_name})"
-    
-    def get_output_schema_names(self) -> List[str]:
-        # The schema is the list of all column names in the source table.
-        # This assumes your Catalog has a method to retrieve column names.
-        return self.catalog.get_all_column_names(self.table_name)
-
-
-class ScanOperator(Operator):
-    def __init__(self, table_name: str, data_generator, output_schema: List[str]):
-        self.table_name = table_name
-        self.data_generator = data_generator
-        self.output_schema = output_schema
-
-    def next(self):
-        """Yields all rows from the table source."""
-        for row in self.data_generator():
-            yield row
-
-    def display_plan(self, level=0) -> str:
-        indent = '  ' * level
-        return f"{indent}* TableScan (Source: {self.table_name})"
-    
-    def get_output_schema_names(self) -> List[str]:
-        # The schema is the list of all column names in the source table.
-        # This assumes your Catalog has a method to retrieve column names.
-        return self.output_schema
-
 
 comparison_operators = {
     '=': lambda x, y: x == y,
@@ -93,36 +52,50 @@ logical_operators = {
 
 class LogicalPredicate(Predicate):
     def __init__(self, op: str, left: Predicate, right: Predicate):
-        self.func = logical_operators[op]
         self.op = op
         self.left = left
         self.right = right
 
     def evaluate(self, row):
-        if self.func is logical_operators['AND']:
+        if self.op == 'AND':
             return self.left.evaluate(row) and self.right.evaluate(row)
         return self.left.evaluate(row) or self.right.evaluate(row)
-    def __str__(self):
-        return f"({self.left} {self.func.__name__.upper()} {self.right})"
 
+    def __str__(self):
+        return f"({self.left} {self.op} {self.right})"
 
 class ComparisonPredicate(Predicate):
-    def __init__(self, comparison: str, val1: Any, val2: Any, col_idx1: None | int, col_idx2: None | int):
+    def __init__(self, comparison: str, val1: Any, val2: Any, col_idx1: Optional[int], col_idx2: Optional[int]):
         self.comparison_function = comparison_operators[comparison]
         self.val1, self.val2 = val1, val2
         self.col_idx1, self.col_idx2 = col_idx1, col_idx2
 
     def evaluate(self, row):
-        """Evaluates the condition for a single row based on indices/values."""
         x = self.val1 if self.col_idx1 is None else row[self.col_idx1]
         y = self.val2 if self.col_idx2 is None else row[self.col_idx2]
         return self.comparison_function(x, y)
 
     def __str__(self):
-        left = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"Lit[{self.val1!r}]"
-        right = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"Lit[{self.val2!r}]"
-        return f"{left} {self.comparison_function.__name__} {right}"
+        left = f"Col[{self.col_idx1}]" if self.col_idx1 is not None else f"'{self.val1}'"
+        right = f"Col[{self.col_idx2}]" if self.col_idx2 is not None else f"'{self.val2}'"
+        return f"{left} OP {right}"
         
+class ScanOperator(Operator):
+    def __init__(self, table_name: str, data_generator, schema: Schema):
+        self.table_name = table_name
+        self.data_generator = data_generator
+        self.schema = schema
+
+    def next(self):
+        yield from self.data_generator()
+
+    def get_output_schema(self) -> Schema:
+        return self.schema
+
+    def display_plan(self, level=0) -> str:
+        indent = '  ' * level
+        return f"{indent}* TableScan (Source: {self.table_name})"
+
 class Filter(Operator):
     def __init__(self, predicate: Predicate, parent: Operator):
         self.predicate = predicate
@@ -133,138 +106,114 @@ class Filter(Operator):
             if self.predicate.evaluate(row):
                 yield row
 
+    def get_output_schema(self) -> Schema:
+        return self.parent.get_output_schema()
+
     def display_plan(self, level=0):
         indent = '  ' * level
-        output = [f"{indent}* Filter (Condition: {self.predicate})"]
+        output = [f"{indent}* Filter (Cond: {self.predicate})"]
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
-    def get_output_schema_names(self) -> List[str]:
-        return self.parent.get_output_schema_names()
-
 class Projection(Operator):
-    def __init__(self, column_indices: List[int], column_names, parent: Operator):
-        self.column_indices = column_indices # List of indices to keep
-        self.column_names = column_names
+    def __init__(self, column_indices: List[int], output_schema: Schema, parent: Operator):
+        self.column_indices = column_indices
+        self.output_schema = output_schema
         self.parent = parent
 
     def next(self):
+        # STAR EXPANSION REMOVED: The planner has already resolved indices.
+        # This loop is now extremely tight and performant.
         for row in self.parent.next():
-            if '*' in self.column_indices:
-                yield row
-            else:
-                yield tuple(row[i] for i in self.column_indices)
+            yield tuple(row[i] for i in self.column_indices)
     
+    def get_output_schema(self) -> Schema:
+        return self.output_schema
+
     def display_plan(self, level=0):
         indent = '  ' * level
-        
-        indices_str = self.column_indices 
-        output = [f"{indent}* Projection (Columns: {indices_str})"]
-        
-        if self.parent:
-            output.append(self.parent.display_plan(level + 1))
-            
+        names = self.output_schema.get_names()
+        output = [f"{indent}* Projection (Columns: {names})"]
+        output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
-    def get_output_schema_names(self) -> List[str]:
-        # The Projection operator *is* the final output schema.
-        return self.column_names
-
 class Sorter(Operator):
-    def __init__(self, sort_keys, parent):
-        self.sort_keys = sort_keys  # List of (column_index, direction)
+    def __init__(self, sort_keys: List[tuple], parent: Operator):
+        self.sort_keys = sort_keys  # (index, is_descending)
         self.parent = parent
         
     def next(self):
         all_rows = list(self.parent.next())
-        
-        if not all_rows:
-            return
+        if not all_rows: return
 
         def compare_rows(row_a, row_b):
-            """
-            Compares two rows based on all defined sort keys.
-            Returns:
-              -1 if row_a comes before row_b
-               1 if row_b comes before row_a
-               0 if rows are equal according to the sort keys
-            """
             for index, is_descending in self.sort_keys:
-                val_a = row_a[index]
-                val_b = row_b[index]
+                if row_a[index] < row_b[index]: return -1 if not is_descending else 1
+                if row_a[index] > row_b[index]: return 1 if not is_descending else -1
+            return 0
 
-                if val_a < val_b:
-                    return -1 if not is_descending else 1
-                
-                if val_a > val_b:
-                    return 1 if not is_descending else -1
-                
-                
-            return 0 # All sort keys were equal
+        yield from sorted(all_rows, key=cmp_to_key(compare_rows))
 
-        sorted_rows = sorted(
-            all_rows,
-            key=cmp_to_key(compare_rows)
-        )
-        
-        # 4. Yield the sorted results
-        yield from sorted_rows
+    def get_output_schema(self) -> Schema:
+        return self.parent.get_output_schema()
+
     def display_plan(self, level=0):
         indent = '  ' * level
-        sort_items_str = ', '.join([f"Col[{idx}] {direction}" for idx, direction in self.sort_keys])
-        output = [f"{indent}* Sorter (Keys: {sort_items_str})"]
+        keys = ", ".join([f"Col[{i}]" for i, _ in self.sort_keys])
+        output = [f"{indent}* Sorter (Keys: {keys})"]
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
-    def get_output_schema_names(self) -> List[str]:
-        return self.parent.get_output_schema_names()
 
-class Distinct(Operator): # Inherits from the ABC
-    def __init__(self, column_indices: list[int], parent: Operator):
+class Distinct(Operator):
+    def __init__(self, column_indices: List[int], parent: Operator):
         self.column_indices = column_indices
-        self.parent: Operator = parent
+        self.parent = parent
         self.unique_keys = set() 
 
     def next(self) -> Generator[Row, None, None]:
+        # Reset state on each execution if necessary
+        self.unique_keys = set()
         for row in self.parent.next():
-            key = tuple([row[i] for i in self.column_indices])
+            # We create a key based on the indices we want to be distinct
+            key = tuple(row[i] for i in self.column_indices)
             
-            if key in self.unique_keys:
-                continue
-            print(f"Unique key {key}") 
-            self.unique_keys.add(key)
-            yield row
+            if key not in self.unique_keys:
+                self.unique_keys.add(key)
+                yield row
             
-    def display_plan(self, indent: int = 0) -> str:
-        prefix = "  " * indent
-        output = f"{prefix}Distinct Operator (on columns: {self.column_indices})\n"
-        output += self.parent.display_plan(indent + 1)
-        return output
+    def get_output_schema(self) -> Schema:
+        # Distinct doesn't change column names or order
+        return self.parent.get_output_schema()
 
-    def get_output_schema_names(self) -> List[str]:
-        return self.parent.get_output_schema_names()
+    def display_plan(self, level: int = 0) -> str:
+        indent = "  " * level
+        output = [f"{indent}* Distinct (on indices: {self.column_indices})"]
+        output.append(self.parent.display_plan(level + 1))
+        return "\n".join(output)
+
 
 class Limit(Operator):
-    def __init__(self, count, parent):
-        self.count = count # Integer limit
+    def __init__(self, count: int, parent: Operator):
+        self.count = count
         self.parent = parent
         
     def next(self):
-        rows_yielded = 0
+        yielded = 0
         for row in self.parent.next():
-            if rows_yielded < self.count:
+            if yielded < self.count:
                 yield row
-                rows_yielded += 1
+                yielded += 1
             else:
-                return
+                break
                 
+    def get_output_schema(self) -> Schema:
+        return self.parent.get_output_schema()
+
     def display_plan(self, level=0):
         indent = '  ' * level
         output = [f"{indent}* Limit (Count: {self.count})"]
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
-
-    def get_output_schema_names(self) -> List[str]:
-        return self.parent.get_output_schema_names()
 
 class AggregationState:
     """Base class defining the interface for all aggregate functions."""
@@ -346,100 +295,40 @@ AGGREGATE_MAP = {
     'AVG': AvgState,
 }
 
-class Aggregate:
-    def __init__(self, group_key_indices, aggregate_specs: List[AggregateSpec], parent):
-        self.group_key_indices = group_key_indices
-        self.aggregate_specs = aggregate_specs # [(func_name, arg_index, is_distinct), ...]
+class Aggregate(Operator):
+    def __init__(self, group_indices: List[int], specs: List[AggregateSpec], output_schema: Schema, parent: Operator):
+        self.group_indices = group_indices
+        self.specs = specs
+        self.output_schema = output_schema
         self.parent = parent
-        parent_schema = parent.get_output_schema_names()
-        group_names = [parent_schema[i].split('.')[-1] for i in group_key_indices]
-        agg_names = [a.output_name for a in aggregate_specs]
-        self.output_names = group_names + agg_names
-        print(f"Aggregate self.output_names: {self.output_names}")
 
     def next(self):
-        # Dictionary to hold the state: 
-        # {group_key_tuple: [AggStateObject1, AggStateObject2, ...]}
         grouped_states = {}
-        
-        # 1. Iterate and Update Aggregate State Objects
         for row in self.parent.next():
-            group_key = tuple(row[i] for i in self.group_key_indices)
-            
+            group_key = tuple(row[i] for i in self.group_indices)
             if group_key not in grouped_states:
-                # Initialize a list of state objects for a new group
-                state_objects = []
-                for spec in self.aggregate_specs:
-                    func, arg_index, is_distinct = spec.function, spec.arg_index, spec.is_distinct
-                    if is_distinct:
-                        func += ' DISTINCT'
-                    StateClass = AGGREGATE_MAP[func]
-                    state_objects.append(StateClass())
-                grouped_states[group_key] = state_objects
+                # Build state objects based on specs
+                states = []
+                for spec in self.specs:
+                    key = spec.function + (' DISTINCT' if spec.is_distinct else '')
+                    states.append(AGGREGATE_MAP[key]())
+                grouped_states[group_key] = states
 
-            # Retrieve the list of state objects for the current group
-            current_states = grouped_states[group_key]
+            for i, spec in enumerate(self.specs):
+                val = True if spec.arg_index is None else row[spec.arg_index]
+                grouped_states[group_key][i].update(val)
 
-            # Update each state object
-            for i, spec in enumerate(self.aggregate_specs):
-                func, arg_index, is_distinct = spec.function, spec.arg_index, spec.is_distinct
-                state_object = current_states[i]
-                
-                # Get the value to pass to the update method
-                if arg_index == '*':
-                    # For COUNT(*), we pass a non-None value (e.g., True) to signal a row exists
-                    value = True 
-                else:
-                    value = row[arg_index]
-                
-                state_object.update(value)
+        for group_key, states in grouped_states.items():
+            yield tuple(list(group_key) + [s.finalize() for s in states])
 
-        # 2. Finalize and Yield Results
-        for group_key, state_objects in grouped_states.items():
-            result_row = list(group_key)
-            
-            for state_object in state_objects:
-                # Call finalize() which calculates the final result (e.g., SUM/COUNT for AVG)
-                final_agg_result = state_object.finalize() 
-                result_row.append(final_agg_result)
-
-            yield tuple(result_row)
+    def get_output_schema(self) -> Schema:
+        return self.output_schema
 
     def display_plan(self, level=0):
         indent = '  ' * level
-        
-        # 1. Format GROUP BY Keys
-        # NOTE: This assumes you have a way (like a Catalog) to map index back to name, 
-        # but for plan display, referencing the index is often sufficient if names are unknown.
-        
-        if self.group_key_indices:
-            # Display grouping columns if they exist
-            group_keys_str = ', '.join([f"Col[{idx}]" for idx in self.group_key_indices])
-            group_by_line = f"(GROUP BY: {group_keys_str})"
-        else:
-            # This handles global aggregation (no GROUP BY)
-            group_by_line = "(Global Aggregation)"
-
-        # 2. Format Aggregates
-        agg_specs_str = ', '.join([
-            f"{spec.function}(Col[{spec.arg_index}])" if spec.arg_index != '*' else f"{spec.function}(*)" 
-            for spec in self.aggregate_specs
-        ])
-        
-        output = [f"{indent}* Aggregate {group_by_line}"]
-        output.append(f"{indent}  Aggregates: {agg_specs_str}")
-        
-        # 3. Recursively call display_plan on the parent operator
+        output = [f"{indent}* Aggregate (Groups: {self.group_indices})"]
         output.append(self.parent.display_plan(level + 1))
-        
         return '\n'.join(output)
-
-    def get_output_schema_names(self) -> List[str]:
-        # Group keys (stripped) + Aggregates
-        # names = [n.split('.')[-1] for n in self.group_names] 
-        # names.extend([spec.output_name for spec in self.aggregate_specs])
-        # return names
-        return self.output_names
 
 class NestedLoopJoin(Operator):
     """NestedLoopJoin retreives all right side rows to memory and then iterate though the left rows to validate the predicate
@@ -448,33 +337,30 @@ class NestedLoopJoin(Operator):
     It is still useful because it can handle any type of predicate. Predicates such as left.id > right.id + 5 cannot be solved
     with a hash join. 
     """
-    def __init__(self, left, right, predicate: Predicate):
+
+    def __init__(self, left: Operator, right: Operator, predicate: Predicate):
         self.left = left
         self.right = right
         self.predicate = predicate
-
         self._right_rows = None
 
     def next(self):
         if self._right_rows is None:
             self._right_rows = list(self.right.next())
 
-        # Linear quadratic join :( it pains me to write this
         for left_row in self.left.next():
             for right_row in self._right_rows:
-                row = left_row + right_row
-                if self.predicate.evaluate(row):
-                    yield row
+                combined_row = left_row + right_row
+                if self.predicate.evaluate(combined_row):
+                    yield combined_row
 
-    def get_output_schema_names(self):
-        return self.left.get_output_schema_names() + self.right.get_output_schema_names()
+    def get_output_schema(self) -> Schema:
+        # Schema concatenation handles all name clashing logic
+        return self.left.get_output_schema() + self.right.get_output_schema()
 
     def display_plan(self, level=0):
-        indent = "  " * level
-        out = [f"{indent}* Join"]
-        out.append(self.left.display_plan(level + 1))
-        out.append(self.right.display_plan(level + 1))
-        return "\n".join(out)
+        indent = '  ' * level
+        return f"{indent}* Join\n{self.left.display_plan(level+1)}\n{self.right.display_plan(level+1)}"
 
 if __name__ == '__main__':
     pass
