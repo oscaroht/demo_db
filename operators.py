@@ -1,8 +1,18 @@
 import abc
 from typing import Generator, List, Any
 from functools import cmp_to_key
+from dataclasses import dataclass
 
 Row = tuple[Any, ...]
+
+
+@dataclass
+class AggregateSpec:
+    function: str
+    arg_index: int | None  # None for COUNT(*)
+    is_distinct: bool
+    output_name: str
+
 
 class Operator(abc.ABC):
     """Abstract Base Class for all relational operators."""
@@ -337,21 +347,13 @@ AGGREGATE_MAP = {
 }
 
 class Aggregate:
-    def __init__(self, group_key_indices, aggregate_specs, parent):
+    def __init__(self, group_key_indices, aggregate_specs: List[AggregateSpec], parent):
         self.group_key_indices = group_key_indices
         self.aggregate_specs = aggregate_specs # [(func_name, arg_index, is_distinct), ...]
         self.parent = parent
         parent_schema = parent.get_output_schema_names()
         group_names = [parent_schema[i].split('.')[-1] for i in group_key_indices]
-        agg_names = []
-        print(f"aggregate specs: {aggregate_specs}")
-        for func, arg, is_distinct in aggregate_specs:
-            dist = 'DISTINCT ' if is_distinct else ''
-            if arg == '*':
-                agg_names.append(f"{func}({dist}*)")
-            else:
-                agg_names.append(f"{func}({dist}{parent_schema[arg]})")
-
+        agg_names = [a.output_name for a in aggregate_specs]
         self.output_names = group_names + agg_names
 
     def next(self):
@@ -366,7 +368,8 @@ class Aggregate:
             if group_key not in grouped_states:
                 # Initialize a list of state objects for a new group
                 state_objects = []
-                for func, arg_index, is_distinct in self.aggregate_specs:
+                for spec in self.aggregate_specs:
+                    func, arg_index, is_distinct = spec.function, spec.arg_index, spec.is_distinct
                     if is_distinct:
                         func += ' DISTINCT'
                     StateClass = AGGREGATE_MAP[func]
@@ -377,7 +380,8 @@ class Aggregate:
             current_states = grouped_states[group_key]
 
             # Update each state object
-            for i, (func, arg_index, is_distinct) in enumerate(self.aggregate_specs):
+            for i, spec in enumerate(self.aggregate_specs):
+                func, arg_index, is_distinct = spec.function, spec.arg_index, spec.is_distinct
                 state_object = current_states[i]
                 
                 # Get the value to pass to the update method
@@ -417,8 +421,8 @@ class Aggregate:
 
         # 2. Format Aggregates
         agg_specs_str = ', '.join([
-            f"{func}(Col[{idx}])" if idx != '*' else f"{func}(*)" 
-            for func, idx, is_distinct in self.aggregate_specs
+            f"{spec.function}(Col[{spec.arg_index}])" if spec.arg_index != '*' else f"{spec.function}(*)" 
+            for spec in self.aggregate_specs
         ])
         
         output = [f"{indent}* Aggregate {group_by_line}"]

@@ -323,11 +323,16 @@ class Parser:
             # Check for COUNT(*)
             if self.stream.current() == '*':
                 argument = self.stream.match('*')
+                column_name = argument
+                aggcol = '*'
             else:
                 argument = self._parse_column_identifier() # Column inside the aggregate
+                aggcol = ColumnRef(*argument)  # may use this as the aggredate argument
+                table, column_name = argument
+                
             
             self.stream.match(')')
-            aggcall = AggregateCall(function_name, argument=argument, is_distinct=is_distinct)
+            aggcall = AggregateCall(function_name, argument=aggcol, is_distinct=is_distinct)
             aggcall.alias = self._parse_alias()
             return aggcall
         

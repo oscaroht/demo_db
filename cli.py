@@ -165,6 +165,8 @@ def render_result(result: QueryResult):
     string_results = [tuple(str(x) for x in row) for row in results]
     string_columns = [str(c) for c in columns]
 
+    print(f"Str columns: {string_columns}")
+
     # 2. Determine max width for each column
     num_cols = len(string_columns)
     max_widths = [len(header) for header in string_columns]

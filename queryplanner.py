@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import List
 
 from syntax_tree import (
@@ -22,17 +21,11 @@ from operators import (
     Distinct,
     ComparisonPredicate,
     LogicalPredicate,
-    JoinOperator
+    JoinOperator,
+    AggregateSpec
 )
 from catalog import Catalog
 
-
-@dataclass
-class AggregateSpec:
-    function: str
-    arg_index: int | None  # None for COUNT(*)
-    is_distinct: bool
-    output_name: str
 
 
 class ParserError(Exception):
@@ -60,11 +53,11 @@ class QueryPlanner:
         if stmt.where_clause:
             plan = self._plan_where(stmt.where_clause, plan)
 
-        if stmt.group_by_clause:
-            input_schema = plan.get_output_schema_names()
+        input_schema = plan.get_output_schema_names()
+        aggregates = self._extract_aggregate_specs(stmt.columns, input_schema)
+        if aggregates or stmt.group_by_clause:
             group_keys = self._resolve_group_keys(stmt.group_by_clause, input_schema)
-            aggregates = self._extract_aggregate_specs(stmt.columns, input_schema)
-            plan = Aggregate(plan, group_keys, aggregates)
+            plan = Aggregate(group_keys, aggregates, plan)
 
         if stmt.is_distinct and not stmt.group_by_clause:  #  distinct has no affect in combination with a group by clause (except COUNT(DISTINCT .))
             plan = self._plan_projection(stmt.columns, plan)
@@ -77,9 +70,7 @@ class QueryPlanner:
         if stmt.limit_clause:
             plan = Limit(stmt.limit_clause.count, plan)
 
-        # 7. FINAL PROJECTION
-        if not stmt.is_distinct or stmt.group_by_clause:
-            plan = self._plan_projection(stmt.columns, plan)
+        plan = self._plan_projection(stmt.columns, plan)
 
         return plan
 
@@ -141,7 +132,7 @@ class QueryPlanner:
 
         return matches[0]
 
-    def _build_base_iterator(self, table: TableRef):
+    def _build_base_iterator(self, table: TableRef) -> ScanOperator:
         table_name = table.name
         alias = table.alias or table.name
         data_generator = self.buffer_manager.get_data_generator(table.name)
@@ -223,11 +214,8 @@ class QueryPlanner:
             if isinstance(col, AggregateCall):
                 arg_index = None
                 if col.argument != "*":
-                    # col.argument is likely a ColumnRef; resolve it to an index
                     arg_index = self._resolve_column_index(col.argument, input_schema)
                 
-                # Generate the internal FQN name for the aggregate column
-                # This ensures the Projection can find it later
                 dist = 'DISTINCT ' if col.is_distinct else ''
                 arg_name = col.argument.name if col.argument != "*" else "*"
                 output_name = f"{col.function_name}({dist}{arg_name})"
@@ -245,8 +233,10 @@ class QueryPlanner:
             return f"{agg.function_name}(*)"
         return f"{agg.function_name}({agg.argument.name})"
 
-    def _resolve_group_keys(self, group_by_clause, input_schema):
+    def _resolve_group_keys(self, group_by_clause, input_schema) -> List[int]:
         group_indices = []
+        if not group_by_clause:
+            return []
         for col in group_by_clause.columns:
             idx = self._resolve_column_index(col, input_schema)
             group_indices.append(idx)
@@ -295,13 +285,14 @@ class QueryPlanner:
                 # Existing aggregate logic, but ensure the argument is resolved correctly
                 dist = 'DISTINCT ' if col.is_distinct else ''
                 # Logic for mapping aggregate output names back to schema
-                name = f"{col.function_name}({dist}{col.argument if col.argument == '*' else col.argument[1]})"
+                name = f"{col.function_name}({dist}{col.argument if col.argument == '*' else col.argument.name})"
                 
                 if name not in input_schema:
                     raise ValueError(f"Aggregate {name} not found in input schema {input_schema}")
                 
                 idx = input_schema.index(name)
-                indices.append(idx)
-                names.append(col.alias if col.alias else name)
+                indices.append(idx)                
+                display_name: str = col.argument.name if isinstance(col.argument, ColumnRef) else col.argument
+                names.append(col.alias if col.alias else display_name)
 
-        return Projection(indices, names, plan)
+        return Projection(indices, input_schema, plan)
