@@ -101,7 +101,7 @@ logo = """
 
 def repl(engine: DatabaseEngine, prompt_session: None | PromptSession = None ):
 
-    welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there is 1 table: users \n 
+    welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there 2 tables: employee and contract \n 
 Supported: SELECT ... FROM users [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
 
 Suggestion for first query: SELECT * FROM users;
@@ -134,6 +134,7 @@ clear - clear the terminal text
         except KeyboardInterrupt:
             print("\nbye")
             break
+
 def render_result(result: QueryResult):
     """
     Formats and prints query results in an ASCII table.
@@ -144,11 +145,13 @@ def render_result(result: QueryResult):
     results = result.rows
 
     if result.ast:
-        print(f"AST")
+        print("\n" + "="*80)
+        print(f"ABSTRACT SYNTAX TREE:")
         print(result.ast.display())
 
     if result.query_plan:
-        print("Query Plan")
+        print("\n" + "="*80)
+        print("QUERY PLAN:")
         print(result.query_plan.display_plan())
 
     print("\n" + "="*80)

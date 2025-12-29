@@ -10,7 +10,7 @@ table_data = {"employee":[
     (5, 'Eve', 19, 'BOS', 30000),
     (6, 'Fay', 22, 'SF', 45000),
     (7, 'Grace', 30, 'NY', 80000)],
-    "contracts": [(1, 1, '2025-01-01', '2027-12-31'),
+    "contract": [(1, 1, '2025-01-01', '2027-12-31'),
                   (2, 1, '2023-01-01', '2024-12-31'),
                   (3, 2, '2024-01-01', '2027-07-01'),
                   (4, 2, '2023-01-01', '2023-12-31'),
@@ -37,7 +37,7 @@ class MockBufferManager:
 
 mock_schema = {
     'employee': ['id', 'name', 'age', 'city', 'salary'],
-    'contracts': ['id', 'employee_id', 'start_date', 'end_date'],
+    'contract': ['id', 'employee_id', 'start_date', 'end_date'],
 }
 mock_catalog = Catalog(mock_schema)
 mock_buffer_manager = MockBufferManager(table_data)
