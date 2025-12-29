@@ -1,6 +1,5 @@
 import pytest
 from queryplanner import QueryPlanner 
-from sql_interpreter import tokenize, TokenStream, Parser 
 from engine import DatabaseEngine
 from result import QueryResult
 from request import QueryRequest
@@ -69,7 +68,9 @@ def planner(mock_catalog, mock_buffer_manager):
     return QueryPlanner(mock_catalog, mock_buffer_manager)
 
 def execute_query_and_get_results(engine, query_string):
-    return engine.execute(QueryRequest(sql=query_string)).rows
+    request = QueryRequest(query_string)
+    result: QueryResult = engine.execute(request)
+    return result.rows
 
 @pytest.fixture
 def engine(mock_table_data):
@@ -78,12 +79,66 @@ def engine(mock_table_data):
     return DatabaseEngine(catalog, buffer_mgr)
 
 
+def test_select_mixed_order(engine):
+    """Test different column order"""
+    query = "SELECT salary, city, name, id FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    assert (60000, 'NY', 'Alice', 1) in results  # test on one row is fine
+
+def test_select_literal(engine):
+    """Test different column order"""
+    query = "SELECT 1 FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    assert results == [(1,)]*9
+
+def test_select_mixed_column_literal(engine):
+    """Test different column order"""
+    query = "SELECT 1, id FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    assert set(results) == {(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9)}
+
+def test_select_mixed_column_literal_mixed_type(engine):
+    """Test different column order"""
+    query = "SELECT 1, id, 'a' FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    assert set(results) == {(1, 1, 'a'), (1, 2, 'a'), (1, 3, 'a'), (1, 4, 'a'), (1, 5, 'a'), (1, 6, 'a'), (1, 7, 'a'), (1, 8, 'a'), (1, 9, 'a')}
+
+def test_select_mixed_column_literal_mixed_type_alias(engine):
+    """Test different column order"""
+    query = "SELECT 1 as a, id as b, 'a' as c FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    assert set(results) == {(1, 1, 'a'), (1, 2, 'a'), (1, 3, 'a'), (1, 4, 'a'), (1, 5, 'a'), (1, 6, 'a'), (1, 7, 'a'), (1, 8, 'a'), (1, 9, 'a')}
+
+
+def test_select_mixed_column_literal_star_mixed_type_alias(engine):
+    """Test different column order"""
+    query = "SELECT 1 as a, *, 'a' as b, id as d FROM users"
+    results = execute_query_and_get_results(engine, query)
+
+    expected = {
+        (1, 1, 'Alice', 30, 'NY', 60000, 'a', 1),
+        (1, 2, 'Bob', 22, 'SF', 45000, 'a', 2),
+        (1, 3, 'Charlie', 25, 'NY', 55000, 'a', 3),
+        (1, 4, 'Dave', 40, 'LA', 70000, 'a', 4),
+        (1, 5, 'Eve', 19, 'BOS', 30000, 'a', 5),
+        (1, 6, 'Fay', 22, 'SF', 45000, 'a', 6),
+        (1, 7, 'Grace', 30, 'NY', 80000, 'a', 7),
+        (1, 8, 'Hank', 22, 'LA', 70000, 'a', 8),
+        (1, 9, 'Ivy', 25, 'NY', 55000, 'a', 9),
+    }
+    assert set(results) == expected
+
+
 def test_select_all_with_filter(engine):
     """Test SELECT * with a WHERE clause."""
     query = "SELECT * FROM users WHERE age > 25;"
     results = execute_query_and_get_results(engine, query)
     
-    # Expected rows: Alice (30), Dave (40), Grace (30)
     assert len(results) == 3
     assert ('Alice' in [r[1] for r in results])
     assert ('Bob' not in [r[1] for r in results])
@@ -93,7 +148,6 @@ def test_select_projection_with_filter(engine):
     query = "SELECT name, salary FROM users WHERE city = 'NY';"
     results = execute_query_and_get_results(engine, query)
     
-    # Expected results: ('Alice', 60000), ('Charlie', 55000), ('Grace', 80000), ('Ivy', 55000)
     assert len(results) == 4
     assert set(results) == {('Alice', 60000), ('Charlie', 55000), ('Grace', 80000), ('Ivy', 55000)}
 
@@ -324,17 +378,5 @@ def test_order_by_multi_key_mixed_direction(engine):
         ('SF', 45000, 'Fay'),  # Or Bob
     ]
 
-    # Since the tie-break order for rows with identical key values (e.g., Dave/Hank) is non-deterministic 
-    # without an implicit primary key, we check the set of results for each city, 
-    # but the primary sort order MUST be preserved.
+    assert results == expected
 
-    # Check primary sort: City (ASC)
-    city_order = [r[0] for r in results]
-    assert city_order[:1] == ['BOS']
-    assert city_order[1:3] == ['LA', 'LA']
-    assert city_order[3:7] == ['NY', 'NY', 'NY', 'NY']
-    assert city_order[7:] == ['SF', 'SF']
-
-    # Check secondary sort: Salary within NY (DESC)
-    ny_results = [r[1] for r in results if r[0] == 'NY']
-    assert ny_results == [80000, 60000, 55000, 55000] # Checks descending order

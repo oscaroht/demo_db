@@ -138,23 +138,26 @@ def render_result(result: QueryResult):
     """
     Formats and prints query results in an ASCII table.
     """
-    if result.error:
-        print("ERROR: " + str(result.error))
-        return
 
     query_string = result.sql  # destructure to reuse old code
     columns = result.columns
     results = result.rows
 
-    print(f"AST")
-    print(result.ast.display())
+    if result.ast:
+        print(f"AST")
+        print(result.ast.display())
 
-    print("Query Plan")
-    print(result.query_plan.display_plan())
+    if result.query_plan:
+        print("Query Plan")
+        print(result.query_plan.display_plan())
 
     print("\n" + "="*80)
     print(f"QUERY: {query_string}")
     print("="*80)
+    
+    if result.error:
+        print("ERROR: " + str(result.error))
+        return
 
     if not results:
         print("RESULT: (Empty set)")

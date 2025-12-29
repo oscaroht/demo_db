@@ -1,7 +1,6 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
-from operators import Predicate
-from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef
+from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star
 import re
 
 class qtype(StrEnum):
@@ -151,7 +150,7 @@ class Parser:
 
     def _parse_select_statement(self):
         """
-        Parses: SELECT ... FROM ... [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+        Parses: SELECT [ DISTINCT ] ... FROM ... [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
         """
         
         self.stream.match(qtype.SELECT)
@@ -159,7 +158,6 @@ class Parser:
         if self.stream.current() == qtrans.DISTINCT:
             self.stream.match(qtrans.DISTINCT)
             is_distinct = True
-
 
         columns = self._parse_column_list()
 
@@ -170,21 +168,18 @@ class Parser:
             self.stream.match(qtrans.WHERE)
             where_clause = self._parse_logical_expression()
             
-        # 1. Parse optional GROUP BY clause (NEW LOGIC)
         group_by_clause = None
         if self.stream.current() == qtrans.GROUP:
             self.stream.match(qtrans.GROUP)
             self.stream.match(qtrans.BY)
             group_by_clause = self._parse_group_by()
             
-        # 2. Parse optional ORDER BY clause (Existing Logic)
         order_by_clause = None
         if self.stream.current() == qtrans.ORDER:
             self.stream.match(qtrans.ORDER)
             self.stream.match(qtrans.BY)
             order_by_clause = self._parse_order_by()
             
-        # 3. Parse optional LIMIT clause (Existing Logic)
         limit_clause = None
         if self.stream.current() == qtrans.LIMIT:
             self.stream.match(qtrans.LIMIT)
@@ -196,7 +191,7 @@ class Parser:
                                from_clause=from_clause,
                                is_distinct=is_distinct,
                                where_clause=where_clause,
-                               group_by_clause=group_by_clause, # Added to SelectStatement
+                               group_by_clause=group_by_clause,
                                order_by_clause=order_by_clause, 
                                limit_clause=limit_clause)
 
@@ -253,7 +248,7 @@ class Parser:
         sort_items = []
         while True:
             # Column name reference
-            col_ref = self._parse_column_or_aggregate()
+            col_ref = self._parse_expression()
             
             # Check for optional direction (ASC/DESC)
             direction = 'ASC'
@@ -280,36 +275,38 @@ class Parser:
              raise SyntaxError("LIMIT must be followed by a numeric literal.")
                 
         return LimitClause(limit_operand.value)    
+
     def _parse_column_list(self):
         """
-        Parses: * | column_ref | aggregate_call ( , ... )*
+        Parses: * | column_ref | aggregate_call ( , ... ) | literal
         """
         columns = []
         
-        # Check for SELECT *
-        if self.stream.current() == '*':
-            columns.append(ColumnRef(table=None, name='*'))
-            self.stream.advance()
-        else:
-            # Parse one or more columns/aggregates separated by commas
-            while True:
-                columns.append(self._parse_column_or_aggregate())
-                
-                if self.stream.current() == qseparators.COMMA:
-                    self.stream.match(qseparators.COMMA)
-                else:
-                    break
+        # Parse one or more columns/aggregates separated by commas
+        while True:
+            columns.append(self._parse_expression())
+            
+            if self.stream.current() == qseparators.COMMA:
+                self.stream.match(qseparators.COMMA)
+            else:
+                break
                     
         return columns
 
     
-    def _parse_column_or_aggregate(self):
+    def _parse_expression(self) -> Expression:
         """
         Parses a single column or aggregate function call.
         (e.g., id, name, COUNT(*), MAX(price), name as first_name)
         """
         
         current = self.stream.current()
+        if current is None:
+            raise SyntaxError(f"Expected expression (column ref, function call, literal) found end of tokens.")
+
+        if current == '*':
+            self.stream.advance()
+            return Star()
         
         # Check for aggregate functions
         if current in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
@@ -323,26 +320,23 @@ class Parser:
             # Check for COUNT(*)
             if self.stream.current() == '*':
                 argument = self.stream.match('*')
-                column_name = argument
-                aggcol = '*'
+                aggcol = Star()
             else:
                 argument = self._parse_column_identifier() # Column inside the aggregate
-                aggcol = ColumnRef(*argument)  # may use this as the aggredate argument
-                table, column_name = argument
-                
+                aggcol = ColumnRef(*argument)
             
             self.stream.match(')')
-            aggcall = AggregateCall(function_name, argument=aggcol, is_distinct=is_distinct)
+            aggcall = AggregateCall(function_name, aggcol, is_distinct=is_distinct)
             aggcall.alias = self._parse_alias()
             return aggcall
         
-        table_and_col_name = self._parse_column_identifier()
-        print(table_and_col_name)
-        colref = ColumnRef(*table_and_col_name)
-        colref.alias = self._parse_alias()
-        
-
-        return colref
+        if current.startswith("'") and current.endswith("'") or current.isdigit():
+            col = self._parse_literal()
+        else:
+            table, col_name = self._parse_column_identifier()
+            col = ColumnRef(table, col_name)
+        col.alias = self._parse_alias()
+        return col
 
     def _parse_alias(self) -> None | str:
         if self.stream.current() == 'AS':
@@ -359,7 +353,6 @@ class Parser:
         self.stream.advance()
         return token
 
-
     def _parse_column_identifier(self) -> Tuple[None | str, str]:
         """Parse a table name or column name."""
         token = self.stream.current()
@@ -375,6 +368,18 @@ class Parser:
         
         self.stream.advance()
         return table, column
+
+    def _parse_literal(self) -> Literal:
+        token: None | str = self.stream.current()
+        if token is None:
+            raise SyntaxError("Expected literal value not end of query")
+        value: str | int = token
+        if token.isdigit():
+            value = int(token)
+        else:
+            value = token[1:-1]  # strip ' and '
+        self.stream.advance()
+        return Literal(value)
 
     def _parse_logical_expression(self) -> Comparison | LogicalExpression:
         """
