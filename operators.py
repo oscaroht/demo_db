@@ -3,6 +3,9 @@ from typing import Generator, List, Any
 from functools import cmp_to_key
 from dataclasses import dataclass
 from typing import Generator, List, Any, Optional  # <--- Added Optional here
+
+
+from syntax_tree import ProjectionTarget
 from schema import Schema, ColumnInfo
 Row = tuple[Any, ...]
 
@@ -27,7 +30,7 @@ class Operator(abc.ABC):
         raise NotImplementedError
         
     @abc.abstractmethod
-    def get_output_schema(self) -> List[str]:
+    def get_output_schema(self) -> Schema:
         """Returns the column names that this operator outputs."""
         raise NotImplementedError
 
@@ -116,16 +119,25 @@ class Filter(Operator):
         return '\n'.join(output)
 
 class Projection(Operator):
-    def __init__(self, column_indices: List[int], output_schema: Schema, parent: Operator):
-        self.column_indices = column_indices
+    def __init__(self, targets: List[ProjectionTarget], output_schema: Schema, parent: Operator):
         self.output_schema = output_schema
         self.parent = parent
+        
+        # Pre-compute the extraction logic once in the constructor
+        self.extractors = []
+        for t in targets:
+            if t.index is not None:
+                # Capture the index in a closure
+                # Using i=t.index ensures we bind the current value, not the loop variable
+                self.extractors.append(lambda row, i=t.index: row[i])
+            else:
+                # Capture the literal value in a closure
+                self.extractors.append(lambda row, v=t.value: v)
 
     def next(self):
-        # STAR EXPANSION REMOVED: The planner has already resolved indices.
-        # This loop is now extremely tight and performant.
+        # Now the loop is extremely tight and branchless
         for row in self.parent.next():
-            yield tuple(row[i] for i in self.column_indices)
+            yield tuple(extractor(row) for extractor in self.extractors)
     
     def get_output_schema(self) -> Schema:
         return self.output_schema

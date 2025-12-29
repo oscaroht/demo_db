@@ -4,7 +4,7 @@ from typing import List, Optional
 @dataclass
 class ColumnInfo:
     full_name: str  # e.g., "users.id"
-    alias: Optional[str] = None
+    alias: None | str = None
     is_aggregate: bool = False
 
     @property

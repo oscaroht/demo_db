@@ -1,4 +1,16 @@
- 
+import abc
+from typing import Any, List
+
+from schema import Schema, ColumnInfo
+
+class ProjectionTarget:
+    """A small container for what the Projection operator needs."""
+    def __init__(self, col_info: ColumnInfo, index: None | int = None, value: None | Any = None):
+        if index is None and value is None:  # "is None" because "not index" would also be triggered by 0 (same for value empties)
+            raise Exception(f"ProjectionTarget index is None and also value is None. This is not allowed.")
+        self.info = col_info
+        self.index = index
+        self.value = value
 
 class ASTNode:
     """Base class for all AST nodes."""
@@ -35,24 +47,80 @@ class ASTNode:
                 output.append(f"{field_indent}{name}: {value!r}")
         return '\n'.join(output)
 
+class Expression(ASTNode):
+    """Base for anything that can appear in a SELECT list."""
+    alias: str | None = None
+
+    @abc.abstractmethod
+    def get_lookup_name(self) -> str:
+        """Returns the string used to find this expression in a Schema."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def bind(self, schema: Schema) -> List[ProjectionTarget]:
+        """Method to map the schema to a projection"""
+        raise NotImplementedError
+
+class Star(Expression):
+    """Represents the '*'."""
+    def __repr__(self): return "*"
+
+    def get_lookup_name(self) -> str:
+        return "*"
+
+    def bind(self, schema: Schema) -> List[ProjectionTarget]:
+        return [ProjectionTarget(col_info, index=i) for i, col_info in enumerate(schema.columns)]
 
 
-class TableRef(ASTNode):
-    def __init__(self, name: str, alias: None | str =None):
-        self.name = name.lower()
+class Literal(Expression):
+    """Represents a constant value (number, string)."""
+    def __init__(self, value, alias = None):
+        self.value = value  # anything as long as it can be cast to a string
         self.alias = alias
 
-class ColumnRef(ASTNode):
+    def get_lookup_name(self) -> str:
+        return str(self.value)
+
+    def bind(self, schema: Schema) -> List[ProjectionTarget]:
+        return [ProjectionTarget(ColumnInfo(str(self.value), self.alias), value=self.value)]
+
+class ColumnRef(Expression):
     """Represents a column name reference."""
     def __init__(self, table: None | str, name: str, alias: None | str = None):
         self.table = table.lower() if isinstance(table, str) else table
         self.name = name.lower()
         self.alias = alias
 
-class Literal(ASTNode):
-    """Represents a constant value (number, string)."""
-    def __init__(self, value):
-        self.value = value # Converted type (e.g., int, float)
+    def get_lookup_name(self) -> str:
+        return self.name
+
+    def bind(self, schema: Schema) -> List[ProjectionTarget]:
+        idx = schema.resolve(self.table, self.name)
+        col_name = schema.columns[idx].full_name
+        return [ProjectionTarget(ColumnInfo(col_name, self.alias), index=idx)]
+
+class AggregateCall(Expression):
+    """Represents an aggregate function call (e.g., COUNT(*), MAX(col))."""
+    def __init__(self, function_name, argument, is_distinct=False, alias=None):
+        self.function_name = function_name
+        self.argument: Expression = argument
+        self.is_distinct = is_distinct
+        self.alias = alias
+
+    def get_lookup_name(self) -> str: 
+        dist = 'DISTINCT ' if self.is_distinct else ''
+        # Recursively call get_lookup_name on the argument!
+        return f"{self.function_name}({dist}{self.argument.get_lookup_name()})"
+
+    def bind(self, schema: Schema) -> List[ProjectionTarget]:
+        name = self.get_lookup_name()
+        idx = schema.resolve(None, name)
+        return [ProjectionTarget(ColumnInfo(name, self.alias), index=idx)]
+
+class TableRef(ASTNode):
+    def __init__(self, name: str, alias: None | str =None):
+        self.name = name.lower()
+        self.alias = alias
 
 class OrderByClause(ASTNode):
     """Represents the ORDER BY clause: a list of columns and their direction."""
@@ -90,13 +158,6 @@ class GroupByClause(ASTNode):
     """Represents the GROUP BY clause: a list of ColumnRef nodes."""
     def __init__(self, columns):
         self.columns = columns # List of ColumnRef nodes
-class AggregateCall(ASTNode):
-    """Represents an aggregate function call (e.g., COUNT(*), MAX(col))."""
-    def __init__(self, function_name, argument=None, is_distinct=False, alias=None):
-        self.function_name = function_name # String (e.g., 'COUNT', 'MAX')
-        self.argument = argument           # ColumnRef or '*'
-        self.is_distinct = is_distinct
-        self.alias = alias
  
 class Join(ASTNode):
     def __init__(self, left: TableRef | str, right: TableRef | str, condition: BinaryOp):

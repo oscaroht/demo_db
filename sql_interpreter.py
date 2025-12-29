@@ -1,7 +1,7 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
 from operators import Predicate
-from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef
+from syntax_tree import SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star
 import re
 
 class qtype(StrEnum):
@@ -151,7 +151,7 @@ class Parser:
 
     def _parse_select_statement(self):
         """
-        Parses: SELECT ... FROM ... [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+        Parses: SELECT [ DISTINCT ] ... FROM ... [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
         """
         
         self.stream.match(qtype.SELECT)
@@ -159,7 +159,6 @@ class Parser:
         if self.stream.current() == qtrans.DISTINCT:
             self.stream.match(qtrans.DISTINCT)
             is_distinct = True
-
 
         columns = self._parse_column_list()
 
@@ -170,21 +169,18 @@ class Parser:
             self.stream.match(qtrans.WHERE)
             where_clause = self._parse_logical_expression()
             
-        # 1. Parse optional GROUP BY clause (NEW LOGIC)
         group_by_clause = None
         if self.stream.current() == qtrans.GROUP:
             self.stream.match(qtrans.GROUP)
             self.stream.match(qtrans.BY)
             group_by_clause = self._parse_group_by()
             
-        # 2. Parse optional ORDER BY clause (Existing Logic)
         order_by_clause = None
         if self.stream.current() == qtrans.ORDER:
             self.stream.match(qtrans.ORDER)
             self.stream.match(qtrans.BY)
             order_by_clause = self._parse_order_by()
             
-        # 3. Parse optional LIMIT clause (Existing Logic)
         limit_clause = None
         if self.stream.current() == qtrans.LIMIT:
             self.stream.match(qtrans.LIMIT)
@@ -196,7 +192,7 @@ class Parser:
                                from_clause=from_clause,
                                is_distinct=is_distinct,
                                where_clause=where_clause,
-                               group_by_clause=group_by_clause, # Added to SelectStatement
+                               group_by_clause=group_by_clause,
                                order_by_clause=order_by_clause, 
                                limit_clause=limit_clause)
 
@@ -280,6 +276,7 @@ class Parser:
              raise SyntaxError("LIMIT must be followed by a numeric literal.")
                 
         return LimitClause(limit_operand.value)    
+
     def _parse_column_list(self):
         """
         Parses: * | column_ref | aggregate_call ( , ... )*
@@ -288,7 +285,7 @@ class Parser:
         
         # Check for SELECT *
         if self.stream.current() == '*':
-            columns.append(ColumnRef(table=None, name='*'))
+            columns.append(Star())
             self.stream.advance()
         else:
             # Parse one or more columns/aggregates separated by commas
@@ -323,16 +320,13 @@ class Parser:
             # Check for COUNT(*)
             if self.stream.current() == '*':
                 argument = self.stream.match('*')
-                column_name = argument
-                aggcol = '*'
+                aggcol = Star()
             else:
                 argument = self._parse_column_identifier() # Column inside the aggregate
-                aggcol = ColumnRef(*argument)  # may use this as the aggredate argument
-                table, column_name = argument
-                
+                aggcol = ColumnRef(*argument)
             
             self.stream.match(')')
-            aggcall = AggregateCall(function_name, argument=aggcol, is_distinct=is_distinct)
+            aggcall = AggregateCall(function_name, aggcol, is_distinct=is_distinct)
             aggcall.alias = self._parse_alias()
             return aggcall
         

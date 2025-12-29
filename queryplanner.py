@@ -1,7 +1,7 @@
 from typing import List, Optional
 from syntax_tree import (
-    ASTNode, SelectStatement, LogicalExpression, Comparison,
-    Literal, ColumnRef, TableRef, AggregateCall, Join
+    ASTNode, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
+    Literal, ColumnRef, TableRef, AggregateCall, Join, Expression, Star
 )
 from operators import (
     Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
@@ -87,96 +87,79 @@ class QueryPlanner:
     def _plan_aggregate(self, stmt: SelectStatement, plan):
         input_schema = plan.get_output_schema()
         
-        # Resolve group indices
+        # Resolve group indices using bind()
         group_indices = []
         group_cols = []
         if stmt.group_by_clause:
             for col in stmt.group_by_clause.columns:
-                idx = input_schema.resolve(col.table, col.name)
-                group_indices.append(idx)
-                group_cols.append(input_schema.columns[idx])
+                target = col.bind(input_schema)[0] # Consistent with Projection
+                group_indices.append(target.index)
+                group_cols.append(target.info)
 
-        # Extract aggregate specs and build output schema
+        # Aggregates logic (Your current version is already mostly using bind() for the argument)
         specs = []
         agg_cols = []
         for col in stmt.columns:
             if isinstance(col, AggregateCall):
-                arg_idx = None # For COUNT(*)
-                if col.argument != "*":
-                    arg_idx = input_schema.resolve(col.argument.table, col.argument.name)
+                arg_targets = col.argument.bind(input_schema)
+                arg_idx = arg_targets[0].index if not isinstance(col.argument, Star) else None
                 
-                dist = 'DISTINCT ' if col.is_distinct else ''
-                arg_name = col.argument.name if col.argument != "*" else "*"
-                output_name = f"{col.function_name}({dist}{arg_name})"
-                
-                specs.append(AggregateSpec(col.function_name, arg_idx, col.is_distinct, output_name))
-                agg_cols.append(ColumnInfo(full_name=output_name, is_aggregate=True))
+                lookup_name = col.get_lookup_name()
+                specs.append(AggregateSpec(col.function_name, arg_idx, col.is_distinct, lookup_name))
+                agg_cols.append(ColumnInfo(lookup_name, col.alias))
 
-        # The new schema for the output of the Aggregate Operator
         output_schema = Schema(group_cols + agg_cols)
         return Aggregate(group_indices, specs, output_schema, plan)
 
-    def _plan_projection(self, columns, plan):
+    def _plan_projection(self, columns: List[Expression], plan):
         input_schema = plan.get_output_schema()
-        projected_indices = []
-        projected_cols = []
+        
+        all_targets = []
+        for expr in columns:
+            all_targets.extend(expr.bind(input_schema))
 
-        for col in columns:
-            if isinstance(col, ColumnRef) and col.name == "*":
-                # ASTERISK EXPANSION
-                for i, info in enumerate(input_schema.columns):
-                    projected_indices.append(i)
-                    projected_cols.append(info)
-            
-            elif isinstance(col, (ColumnRef, AggregateCall)):
-                # Logic for both raw columns and pre-calculated aggregates is now the same
-                name = self._get_name_from_node(col)
-                idx = input_schema.resolve(getattr(col, 'table', None), name)
-                
-                projected_indices.append(idx)
-                # Apply alias to the new schema if provided
-                orig_col = input_schema.columns[idx]
-                projected_cols.append(ColumnInfo(orig_col.full_name, col.alias))
-
-        return Projection(projected_indices, Schema(projected_cols), plan)
+        new_schema = Schema([t.info for t in all_targets])
+        
+        # Pass the full target objects to the operator
+        return Projection(all_targets, new_schema, plan)
 
     def _plan_order_by(self, order_by_clause, plan):
         schema = plan.get_output_schema()
         sort_keys = []
         for item in order_by_clause.sort_items:
-            name = self._get_name_from_node(item.column)
-            idx = schema.resolve(getattr(item.column, 'table', None), name)
-            sort_keys.append((idx, item.direction == "DESC"))
+            target = item.column.bind(schema)[0]
+            sort_keys.append((target.index, item.direction == "DESC"))
         return Sorter(sort_keys, plan)
 
     def _build_predicate(self, expr, schema: Schema):
         if isinstance(expr, Comparison):
-            v1, i1 = self._resolve_operand(expr.left, schema)
-            v2, i2 = self._resolve_operand(expr.right, schema)
-            return ComparisonPredicate(expr.op, v1, v2, i1, i2)
+                target_left = expr.left.bind(schema)[0]
+                target_right = expr.right.bind(schema)[0]
+                
+                return ComparisonPredicate(
+                    expr.op, 
+                    val1=target_left.value,   # Will be None for columns
+                    val2=target_right.value,  # Will be None for columns
+                    col_idx1=target_left.index, # Will be None for literals
+                    col_idx2=target_right.index  # Will be None for literals
+                )
 
         if isinstance(expr, LogicalExpression):
             left = self._build_predicate(expr.left, schema)
             right = self._build_predicate(expr.right, schema)
             return LogicalPredicate(expr.op, left, right)
+    
         raise TypeError(f"Unsupported expression: {type(expr)}")
-
-    def _resolve_operand(self, operand, schema: Schema):
-        if isinstance(operand, Literal):
-            return operand.value, None
-        if isinstance(operand, ColumnRef):
-            return None, schema.resolve(operand.table, operand.name)
-        raise TypeError(f"Unsupported operand: {type(operand)}")
-
-    def _get_name_from_node(self, node) -> str:
-        """Helper to get the lookup name for a column or aggregate call."""
-        if isinstance(node, ColumnRef):
-            return node.name
-        if isinstance(node, AggregateCall):
-            dist = 'DISTINCT ' if node.is_distinct else ''
-            arg_name = node.argument.name if node.argument != "*" else "*"
-            return f"{node.function_name}({dist}{arg_name})"
-        return str(node)
+    #
+    # def _get_name_from_node(self, node) -> str:
+    #     """Helper to get the lookup name for a column or aggregate call."""
+    #     if isinstance(node, ColumnRef):
+    #         return node.name
+    #     if isinstance(node, AggregateCall):
+    #         dist = 'DISTINCT ' if node.is_distinct else ''
+    #         arg_name = node.argument.name if node.argument != "*" else "*"
+    #         return f"{node.function_name}({dist}{arg_name})"
+    #     return str(node)
 
     def _has_aggregates(self, columns) -> bool:
         return any(isinstance(c, AggregateCall) for c in columns)
