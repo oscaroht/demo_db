@@ -2,7 +2,7 @@ from catalog import Catalog
 from engine import DatabaseEngine
 from cli import repl
 
-table_data = {"users":[
+table_data = {"employee":[
     (1, 'Alice', 30, 'NY', 60000),
     (2, 'Bob', 22, 'SF', 45000),
     (3, 'Charlie', 25, 'NY', 55000),
@@ -12,7 +12,9 @@ table_data = {"users":[
     (7, 'Grace', 30, 'NY', 80000)],
     "contracts": [(1, 1, '2025-01-01', '2027-12-31'),
                   (2, 1, '2023-01-01', '2024-12-31'),
-                  (3, 2, '2024-01-01', '2027-07-01'),]
+                  (3, 2, '2024-01-01', '2027-07-01'),
+                  (4, 2, '2023-01-01', '2023-12-31'),
+                  (5, 3, '2026-01-01', '2026-03-31')],
 }
 
 class MockBufferManager:
@@ -34,14 +36,8 @@ class MockBufferManager:
         return data_generator
 
 mock_schema = {
-    'users': {
-        'id': 0,
-        'name': 1,
-        'age': 2,
-        'city': 3,
-        'salary': 4
-    },
-        'contracts': {'id': 0, 'employee_id': 1, 'start_date': 2, 'end_date': 3}
+    'employee': ['id', 'name', 'age', 'city', 'salary'],
+    'contracts': ['id', 'employee_id', 'start_date', 'end_date'],
 }
 mock_catalog = Catalog(mock_schema)
 mock_buffer_manager = MockBufferManager(table_data)

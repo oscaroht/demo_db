@@ -1,6 +1,5 @@
 import pytest
 from queryplanner import QueryPlanner 
-import result
 from engine import DatabaseEngine
 from result import QueryResult
 from request import QueryRequest
