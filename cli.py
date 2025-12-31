@@ -144,6 +144,11 @@ def render_result(result: QueryResult):
     columns = result.columns
     results = result.rows
 
+    if result.tokens:
+        print("\n" + "="*80)
+        print(f"TOKENS:")
+        print(result.tokens)
+
     if result.ast:
         print("\n" + "="*80)
         print(f"ABSTRACT SYNTAX TREE:")
