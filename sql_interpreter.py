@@ -27,8 +27,8 @@ class qtrans(StrEnum):
     ASC = 'ASC'
     FROM = 'FROM'
     AS = 'AS'
-    JOIN = auto()
-    ON = auto()
+    JOIN = 'JOIN'
+    ON = 'ON'
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'
@@ -46,21 +46,22 @@ class qcomparators(StrEnum):
     LE = '<='
     GE = '>='
 
+class qwhitespaces(StrEnum):
+    NEWLINE = '\n'
+    TAB = '\t'
+    WHITESPACE = ' '
 
 class qseparators(StrEnum):
     SEMICOLON = ';'
     COMMA = ','
-    # DOT = '.'
-    WHITESPACE = ' '
 
-
-token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators]
+token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
 keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
 
 def tokenize(query: str) -> list[str]:
     """The goal is to split the function by whitespace, comma, dot and semicolon."""
 
-    token_separators.sort(key=lambda s: len(s), reverse=True)
+    token_separators.sort(key=lambda s: len(s), reverse=True)  # this list is iterated to match with tokens. Longest tokens should go first
 
     tokens = []
     char_index = 0
@@ -83,29 +84,31 @@ def tokenize(query: str) -> list[str]:
             prev_char_index = char_index
             continue
 
+        # check for separator 
+        # nested loop hurts a bit but performance gains in tokenizer are tiny compared to overal performance
         for k in token_separators:
             if len(query) >= char_index+len(k) and query[char_index:char_index+len(k)] == k:
+                # append previous token
                 token = query[prev_char_index:char_index]
                 if token != '':
-                    tokens.append(token)
-                tokens.append(k)
+                    tokens.append(token if token.upper() not in keywords_set else token.upper())
+                if k not in qwhitespaces:
+                    tokens.append(k)
                 char_index += len(k)
                 prev_char_index = char_index
                 break
         else:
             char_index += 1
-    if query[prev_char_index:char_index] != '':
-        tokens.append(query[prev_char_index:char_index])
+
+    token = query[prev_char_index:char_index]
+    if token != '':
+        tokens.append(token if token.upper() not in keywords_set else token.upper())
     return tokens
        
 
 class TokenStream:
     def __init__(self, tokens):
-        # Filter out WHITESPACE tokens and make keywords uppercase
-        self.tokens = [
-            t.upper() if t.upper() in keywords_set else t
-            for t in tokens if t != qseparators.WHITESPACE
-        ]
+        self.tokens = tokens
         self.pos = 0
 
     def current(self):

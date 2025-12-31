@@ -122,20 +122,16 @@ class Projection(Operator):
     def __init__(self, targets: List[ProjectionTarget], output_schema: Schema, parent: Operator):
         self.output_schema = output_schema
         self.parent = parent
-        
-        # Pre-compute the extraction logic once in the constructor
-        self.extractors = []
+        self.extractors = []  # list of callables that either pass the value or the row[i] allong
         for t in targets:
             if t.index is not None:
-                # Capture the index in a closure
-                # Using i=t.index ensures we bind the current value, not the loop variable
+                # For index expressions (col ref, agg call) at the value at the row's index
                 self.extractors.append(lambda row, i=t.index: row[i])
             else:
-                # Capture the literal value in a closure
+                # Literal values just take value regardless of the row
                 self.extractors.append(lambda row, v=t.value: v)
 
     def next(self):
-        # Now the loop is extremely tight and branchless
         for row in self.parent.next():
             yield tuple(extractor(row) for extractor in self.extractors)
     

@@ -23,6 +23,7 @@ class DatabaseEngine:
             if sql[-1] != ';':
                 sql += ';'
             tokens = tokenize(sql)
+            print(tokens)
             stream = TokenStream(tokens)
             parser = Parser(stream) 
             ast_root = parser.parse()

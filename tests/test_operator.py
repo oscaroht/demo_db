@@ -1,4 +1,5 @@
-from operators import Filter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate
+from operators import Filter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate, AggregateSpec
+from schema import Schema, ColumnInfo
 
 class MockParent:
     """A dummy iterator to feed fixed data into the operators."""
@@ -13,16 +14,20 @@ class MockParent:
         return output_column_names
 
 TEST_DATA_FULL_SCHEMA = [
-    (1, 'Alice', 30, 'NY', 60000),  # 0
-    (2, 'Bob', 22, 'SF', 45000),    # 1
-    (3, 'Charlie', 25, 'NY', 55000),# 2
-    (4, 'Dave', 40, 'LA', 70000),   # 3
-    (5, 'Eve', 19, 'BOS', 30000),   # 4
-    (6, 'Fay', 22, 'SF', 45000),    # 5
-    (7, 'Grace', 30, 'NY', 80000),  # 6
-    (8, 'Hank', 22, 'LA', 70000),   # 7
-    (9, 'Ivy', 25, 'NY', 55000),    # 8
+    (1, 'Alice', 30, 'NY', 60000),
+    (2, 'Bob', 22, 'SF', 45000),    
+    (3, 'Charlie', 25, 'NY', 55000),
+    (4, 'Dave', 40, 'LA', 70000),   
+    (5, 'Eve', 19, 'BOS', 30000), 
+    (6, 'Fay', 22, 'SF', 45000),  
+    (7, 'Grace', 30, 'NY', 80000),
+    (8, 'Hank', 22, 'LA', 70000),
+    (9, 'Ivy', 25, 'NY', 55000),
 ]
+
+def create_agg_schema(group_cols, agg_names):
+    cols = [ColumnInfo(name) for name in group_cols + agg_names]
+    return Schema(cols)
 
 
 def test_filter_age_greater_than_30():
@@ -392,39 +397,37 @@ def test_aggregate_global_sum():
     """Test SUM(SALARY) without GROUP BY (Global Aggregate)."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
     
-    # SUM(SALARY) (Index 4). Total Salary: 510000
+    # SUM(SALARY) (Index 4). 
+    specs = [AggregateSpec('SUM', 4, False, "SUM(salary)")]
+    output_schema = create_agg_schema([], ["SUM(salary)"])
+    
     aggregate_op = Aggregate(
-        parent=parent,
-        group_key_indices=[],             # No GROUP BY
-        aggregate_specs=[('SUM', 4, False)],     # SUM(SALARY)
-        
+        group_indices=[], 
+        specs=specs, 
+        output_schema=output_schema, 
+        parent=parent
     )
     
     results = list(aggregate_op.next())
-    
-    expected = [(510000,)]
-    
-    assert len(results) == 1
-    assert results == expected
+    assert results == [(510000,)]
 
 def test_aggregate_group_by_city_count_all():
-    """Test COUNT(*) grouped by CITY, using the '*' wildcard."""
+    """Test COUNT(*) grouped by CITY."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
     
-    # Group By CITY (Index 3), COUNT(*) (Wildcard '*')
+    # Group By CITY (Index 3), COUNT(*) (None for index)
+    specs = [AggregateSpec('COUNT', None, False, "COUNT(*)")]
+    output_schema = create_agg_schema(["city"], ["COUNT(*)"])
+    
     aggregate_op = Aggregate(
-        parent=parent,
-        group_key_indices=[3],              # GROUP BY CITY
-        aggregate_specs=[('COUNT', '*', False)],   # COUNT(*)
-        
+        group_indices=[3], 
+        specs=specs, 
+        output_schema=output_schema, 
+        parent=parent
     )
     
     results = list(aggregate_op.next())
-    
-    # Expected: NY (4), SF (2), LA (2), BOS (1)
-    expected = [
-        ('NY', 4), ('SF', 2), ('LA', 2), ('BOS', 1)
-    ]
+    expected = [('NY', 4), ('SF', 2), ('LA', 2), ('BOS', 1)]
     
     assert len(results) == 4
     assert sorted(results) == sorted(expected)
@@ -434,19 +437,18 @@ def test_aggregate_group_by_city_avg_salary():
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
     
     # Group By CITY (Index 3), AVG(SALARY) (Index 4)
-    # NY Avg: 62500
+    specs = [AggregateSpec('AVG', 4, False, "AVG(salary)")]
+    output_schema = create_agg_schema(["city"], ["AVG(salary)"])
+    
     aggregate_op = Aggregate(
-        parent=parent,
-        group_key_indices=[3],             # GROUP BY CITY
-        aggregate_specs=[('AVG', 4, False)],      # AVG(SALARY)
-        
+        group_indices=[3], 
+        specs=specs, 
+        output_schema=output_schema, 
+        parent=parent
     )
     
     results = list(aggregate_op.next())
-    
-    expected = [
-        ('NY', 62500), ('SF', 45000), ('LA', 70000), ('BOS', 30000)
-    ]
+    expected = [('NY', 62500), ('SF', 45000), ('LA', 70000), ('BOS', 30000)]
     
     assert len(results) == 4
     assert sorted(results) == sorted(expected)
@@ -456,21 +458,19 @@ def test_aggregate_group_by_age_max_salary():
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
     
     # Group By AGE (Index 2), MAX(SALARY) (Index 4)
+    specs = [AggregateSpec('MAX', 4, False, "MAX(salary)")]
+    output_schema = create_agg_schema(["age"], ["MAX(salary)"])
+    
     aggregate_op = Aggregate(
-        parent=parent,
-        group_key_indices=[2],             # GROUP BY AGE
-        aggregate_specs=[('MAX', 4, False)],      # MAX(SALARY)
-        
+        group_indices=[2], 
+        specs=specs, 
+        output_schema=output_schema, 
+        parent=parent
     )
     
     results = list(aggregate_op.next())
-    
     expected = [
-        (30, 80000), # Grace
-        (22, 70000), # Hank
-        (25, 55000), # Charlie/Ivy
-        (40, 70000), # Dave
-        (19, 30000)  # Eve
+        (30, 80000), (22, 70000), (25, 55000), (40, 70000), (19, 30000)
     ]
     
     assert len(results) == 5
@@ -480,17 +480,16 @@ def test_aggregate_min_age_global():
     """Test MIN(AGE) without GROUP BY."""
     parent = MockParent(TEST_DATA_FULL_SCHEMA)
     
-    # MIN(AGE) (Index 2). Min Age: 19
+    # MIN(AGE) (Index 2).
+    specs = [AggregateSpec('MIN', 2, False, "MIN(age)")]
+    output_schema = create_agg_schema([], ["MIN(age)"])
+    
     aggregate_op = Aggregate(
-        parent=parent,
-        group_key_indices=[],             # No GROUP BY
-        aggregate_specs=[('MIN', 2, False)],     # MIN(AGE)
-        
+        group_indices=[], 
+        specs=specs, 
+        output_schema=output_schema, 
+        parent=parent
     )
     
     results = list(aggregate_op.next())
-    
-    expected = [(19,)]
-    
-    assert len(results) == 1
-    assert results == expected
+    assert results == [(19,)]

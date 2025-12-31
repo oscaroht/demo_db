@@ -87,21 +87,23 @@ class QueryPlanner:
     def _plan_aggregate(self, stmt: SelectStatement, plan):
         input_schema = plan.get_output_schema()
         
-        # Resolve group indices using bind()
-        group_indices = []
-        group_cols = []
+        # Group indices
+        group_indices: List[int] = []
+        group_cols: List[ColumnInfo] = []
         if stmt.group_by_clause:
             for col in stmt.group_by_clause.columns:
-                target = col.bind(input_schema)[0] # Consistent with Projection
+                target: ProjectionTarget = col.bind(input_schema)[0]
+                if target.index is None:
+                    raise Exception("Group key should be a column index not literal value")
                 group_indices.append(target.index)
                 group_cols.append(target.info)
 
-        # Aggregates logic (Your current version is already mostly using bind() for the argument)
-        specs = []
-        agg_cols = []
+        # Aggregates logic
+        specs: List[AggregateSpec] = []
+        agg_cols: List[ColumnInfo] = []
         for col in stmt.columns:
             if isinstance(col, AggregateCall):
-                arg_targets = col.argument.bind(input_schema)
+                arg_targets: List[ProjectionTarget] = col.argument.bind(input_schema)
                 arg_idx = arg_targets[0].index if not isinstance(col.argument, Star) else None
                 
                 lookup_name = col.get_lookup_name()
@@ -114,13 +116,12 @@ class QueryPlanner:
     def _plan_projection(self, columns: List[Expression], plan):
         input_schema = plan.get_output_schema()
         
-        all_targets = []
+        all_targets: List[ProjectionTarget] = []
         for expr in columns:
-            all_targets.extend(expr.bind(input_schema))
+            all_targets += expr.bind(input_schema)
 
         new_schema = Schema([t.info for t in all_targets])
         
-        # Pass the full target objects to the operator
         return Projection(all_targets, new_schema, plan)
 
     def _plan_order_by(self, order_by_clause, plan):

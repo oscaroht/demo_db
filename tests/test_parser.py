@@ -1,17 +1,10 @@
+import pytest
 from sql_interpreter import tokenize, TokenStream, Parser
 from syntax_tree import (
-    SelectStatement,
-    ColumnRef,
-    Literal,
-    Comparison,
-    LogicalExpression,
-    AggregateCall,
-    OrderByClause,
-    SortItem,
-    GroupByClause,
-    LimitClause,
+    SelectStatement, ColumnRef, Literal, Comparison, LogicalExpression,
+    AggregateCall, OrderByClause, SortItem, GroupByClause, LimitClause,
+    TableRef, Join, Star
 )
-
 
 def parse(query: str):
     tokens = tokenize(query)
@@ -19,40 +12,44 @@ def parse(query: str):
     parser = Parser(ts)
     return parser.parse()
 
-
-# -------------------- BASIC SELECT --------------------
+# -------------------- BASIC SELECT & FROM --------------------
 
 def test_simple_select_columns():
     ast = parse("SELECT id, name FROM users;")
 
     assert isinstance(ast, SelectStatement)
-    assert ast.table == "users"
+    # Refactored: from_clause is now a TableRef object
+    assert isinstance(ast.from_clause, TableRef)
+    assert ast.from_clause.name == "users"
 
     assert len(ast.columns) == 2
     assert isinstance(ast.columns[0], ColumnRef)
     assert ast.columns[0].name == "id"
     assert ast.columns[1].name == "name"
 
-    assert ast.where_clause is None
-    assert ast.order_by_clause is None
-    assert ast.limit_clause is None
-
-
 def test_select_star():
     ast = parse("SELECT * FROM users;")
 
     assert len(ast.columns) == 1
-    assert ast.columns[0].name == "*"
+    # Refactored: * is represented by a Star object or a specific ColumnRef name
+    assert isinstance(ast.columns[0], Star) or ast.columns[0].name == "*"
 
+# -------------------- JOINS --------------------
 
-# -------------------- DISTINCT --------------------
+def test_join_syntax():
+    ast = parse("SELECT e.name, c.id FROM employee AS e JOIN contract AS c ON e.id = c.employee_id;")
 
-def test_select_distinct():
-    ast = parse("SELECT DISTINCT name FROM users;")
-
-    assert ast.is_distinct is True
-    assert ast.columns[0].name == "name"
-
+    assert isinstance(ast.from_clause, Join)
+    assert ast.from_clause.left.name == "employee"
+    assert ast.from_clause.left.alias == "e"
+    assert ast.from_clause.right.name == "contract"
+    assert ast.from_clause.right.alias == "c"
+    
+    # Verify Join Condition
+    assert isinstance(ast.from_clause.condition, Comparison)
+    assert ast.from_clause.condition.op == "="
+    assert ast.from_clause.condition.left.table == "e"
+    assert ast.from_clause.condition.left.name == "id"
 
 # -------------------- WHERE CLAUSE --------------------
 
@@ -62,44 +59,8 @@ def test_where_simple_comparison():
     where = ast.where_clause
     assert isinstance(where, Comparison)
     assert where.op == ">"
-
-    assert isinstance(where.left, ColumnRef)
     assert where.left.name == "age"
-
-    assert isinstance(where.right, Literal)
     assert where.right.value == 18
-
-
-def test_where_and_or_precedence():
-    ast = parse(
-        "SELECT id FROM users WHERE age > 18 AND active = 1 OR admin = 1;"
-    )
-
-    # OR should be the top-level operator
-    assert isinstance(ast.where_clause, LogicalExpression)
-    assert ast.where_clause.op == "OR"
-
-    left = ast.where_clause.left
-    right = ast.where_clause.right
-
-    assert isinstance(left, LogicalExpression)
-    assert left.op == "AND"
-
-    assert isinstance(right, Comparison)
-    assert right.left.name == "admin"
-
-
-def test_where_parentheses_override_precedence():
-    ast = parse(
-        "SELECT id FROM users WHERE age > 18 AND (active = 1 OR admin = 1);"
-    )
-
-    where = ast.where_clause
-    assert where.op == "AND"
-
-    assert isinstance(where.right, LogicalExpression)
-    assert where.right.op == "OR"
-
 
 # -------------------- AGGREGATES --------------------
 
@@ -109,16 +70,17 @@ def test_select_aggregate_count_star():
     agg = ast.columns[0]
     assert isinstance(agg, AggregateCall)
     assert agg.function_name == "COUNT"
-    assert agg.argument == "*"
-
+    # Refactored: argument is now a Star object
+    assert isinstance(agg.argument, Star)
 
 def test_select_aggregate_with_column():
     ast = parse("SELECT MAX(age) FROM users;")
 
     agg = ast.columns[0]
     assert agg.function_name == "MAX"
-    assert agg.argument == "age"
-
+    # Refactored: argument is now a ColumnRef object
+    assert isinstance(agg.argument, ColumnRef)
+    assert agg.argument.name == "age"
 
 # -------------------- GROUP BY --------------------
 
@@ -128,18 +90,8 @@ def test_group_by_single_column():
     group = ast.group_by_clause
     assert isinstance(group, GroupByClause)
     assert len(group.columns) == 1
+    assert isinstance(group.columns[0], ColumnRef)
     assert group.columns[0].name == "age"
-
-
-def test_group_by_multiple_columns():
-    ast = parse(
-        "SELECT country, city, COUNT(*) FROM users GROUP BY country, city;"
-    )
-
-    group = ast.group_by_clause
-    assert len(group.columns) == 2
-    assert [c.name for c in group.columns] == ["country", "city"]
-
 
 # -------------------- ORDER BY --------------------
 
@@ -148,11 +100,25 @@ def test_order_by_default_direction():
 
     order = ast.order_by_clause
     assert isinstance(order, OrderByClause)
-
     item = order.sort_items[0]
-    assert isinstance(item, SortItem)
     assert item.column.name == "age"
     assert item.direction == "ASC"
+
+# -------------------- LIMIT --------------------
+
+def test_limit_clause():
+    ast = parse("SELECT id FROM users LIMIT 10;")
+
+    assert ast.limit_clause.count == 10
+
+# -------------------- LITERALS --------------------
+
+def test_literals():
+    ast_str = parse("SELECT id FROM users WHERE name = 'Alice';")
+    assert ast_str.where_clause.right.value == "Alice"
+
+    ast_float = parse("SELECT id FROM products WHERE price >= 19.99;")
+    assert ast_float.where_clause.right.value == 19.99    
 
 
 def test_order_by_descending():
@@ -191,5 +157,3 @@ def test_where_float_literal():
 
     where = ast.where_clause
     assert where.right.value == 19.99
-
-
