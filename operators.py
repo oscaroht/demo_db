@@ -26,7 +26,7 @@ class Operator(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def display_plan(self, indent: int = 0) -> str:
+    def display_plan(self, level: int = 0) -> str:
         raise NotImplementedError
         
     @abc.abstractmethod

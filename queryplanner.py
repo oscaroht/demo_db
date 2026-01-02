@@ -1,12 +1,12 @@
 from typing import List, Optional
 from syntax_tree import (
-    ASTNode, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
+    ASTNode, BinaryOp, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
     Literal, ColumnRef, TableRef, AggregateCall, Join, Expression, Star
 )
 from operators import (
-    Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
+    Filter, Predicate, ScanOperator, Projection, Sorter, Limit, Aggregate,
     Distinct, ComparisonPredicate, LogicalPredicate, NestedLoopJoin,
-    AggregateSpec
+    AggregateSpec, Operator
 )
 from catalog import Catalog
 from schema import ColumnInfo, Schema
@@ -58,7 +58,7 @@ class QueryPlanner:
 
         return plan
 
-    def _plan_from(self, node):
+    def _plan_from(self, node) -> ScanOperator | NestedLoopJoin:
         if isinstance(node, TableRef):
             table_name = node.name
             alias = node.alias or node.name
@@ -84,7 +84,7 @@ class QueryPlanner:
 
         raise TypeError(f"Unknown FROM node: {type(node)}")
 
-    def _plan_aggregate(self, stmt: SelectStatement, plan):
+    def _plan_aggregate(self, stmt: SelectStatement, plan) -> Aggregate:
         input_schema = plan.get_output_schema()
         
         # Group indices
@@ -113,8 +113,8 @@ class QueryPlanner:
         output_schema = Schema(group_cols + agg_cols)
         return Aggregate(group_indices, specs, output_schema, plan)
 
-    def _plan_projection(self, columns: List[Expression], plan):
-        input_schema = plan.get_output_schema()
+    def _plan_projection(self, columns: List[Expression], plan: Operator) -> Projection:
+        input_schema: Schema = plan.get_output_schema()
         
         all_targets: List[ProjectionTarget] = []
         for expr in columns:
@@ -124,15 +124,15 @@ class QueryPlanner:
         
         return Projection(all_targets, new_schema, plan)
 
-    def _plan_order_by(self, order_by_clause, plan):
-        schema = plan.get_output_schema()
+    def _plan_order_by(self, order_by_clause, plan) -> Sorter:
+        schema: Schema = plan.get_output_schema()
         sort_keys = []
         for item in order_by_clause.sort_items:
             target = item.column.bind(schema)[0]
             sort_keys.append((target.index, item.direction == "DESC"))
         return Sorter(sort_keys, plan)
 
-    def _build_predicate(self, expr, schema: Schema):
+    def _build_predicate(self, expr: BinaryOp, schema: Schema) -> Predicate:
         if isinstance(expr, Comparison):
                 target_left = expr.left.bind(schema)[0]
                 target_right = expr.right.bind(schema)[0]
@@ -151,16 +151,6 @@ class QueryPlanner:
             return LogicalPredicate(expr.op, left, right)
     
         raise TypeError(f"Unsupported expression: {type(expr)}")
-    #
-    # def _get_name_from_node(self, node) -> str:
-    #     """Helper to get the lookup name for a column or aggregate call."""
-    #     if isinstance(node, ColumnRef):
-    #         return node.name
-    #     if isinstance(node, AggregateCall):
-    #         dist = 'DISTINCT ' if node.is_distinct else ''
-    #         arg_name = node.argument.name if node.argument != "*" else "*"
-    #         return f"{node.function_name}({dist}{arg_name})"
-    #     return str(node)
 
     def _has_aggregates(self, columns) -> bool:
         return any(isinstance(c, AggregateCall) for c in columns)

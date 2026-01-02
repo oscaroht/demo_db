@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from typing import Any, List
 
@@ -145,7 +146,7 @@ class LimitClause(ASTNode):
 
 class BinaryOp(ASTNode):
     """Base class for binary operators (comparisons, arithmetic, logic)."""
-    def __init__(self, op, left, right):
+    def __init__(self, op: str, left: BinaryOp | Expression, right: BinaryOp | Expression):
         self.op = op      # Operator string (e.g., '=', '>', 'AND')
         self.left = left  # Left-hand side AST node
         self.right = right # Right-hand side AST node
@@ -160,7 +161,7 @@ class GroupByClause(ASTNode):
         self.columns = columns # List of ColumnRef nodes
  
 class Join(ASTNode):
-    def __init__(self, left: TableRef | str, right: TableRef | str, condition: BinaryOp):
+    def __init__(self, left: TableRef | Join, right: TableRef | Join, condition: BinaryOp):
         self.left = left
         self.right = right
         self.condition = condition
