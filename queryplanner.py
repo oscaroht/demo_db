@@ -1,7 +1,7 @@
-from typing import List, Optional
+from typing import List
 from syntax_tree import (
     ASTNode, BinaryOp, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
-    Literal, ColumnRef, TableRef, AggregateCall, Join, Expression, Star
+    TableRef, AggregateCall, Join, Expression, Star
 )
 from operators import (
     Filter, Predicate, ScanOperator, Projection, Sorter, Limit, Aggregate,
@@ -11,7 +11,8 @@ from operators import (
 from catalog import Catalog
 from schema import ColumnInfo, Schema
 
-class ParserError(Exception): pass
+class ParserError(Exception):
+    pass
 
 class QueryPlanner:
     def __init__(self, catalog: Catalog, buffer_manager):

@@ -101,10 +101,10 @@ logo = """
 
 def repl(engine: DatabaseEngine, prompt_session: None | PromptSession = None ):
 
-    welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there 2 tables: employee and contract \n 
-Supported: SELECT ... FROM users [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+    welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there are 2 tables: employee and contract \n 
+Supported: SELECT * | expression [ AS ...] FROM table_name [ JOIN table_name ] [ON ...] [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
 
-Suggestion for first query: SELECT * FROM users;
+Suggestion for first query: SELECT * FROM employee;
 
 exit  - exit program
 quit  - same as exit
