@@ -57,6 +57,7 @@ class qseparators(StrEnum):
 
 token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
 keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
+whitespaces_set = set([e.value for e in qwhitespaces])
 
 def tokenize(query: str) -> list[str]:
     """The goal is to split the function by whitespace, comma, dot and semicolon."""
@@ -92,7 +93,7 @@ def tokenize(query: str) -> list[str]:
                 token = query[prev_char_index:char_index]
                 if token != '':
                     tokens.append(token if token.upper() not in keywords_set else token.upper())
-                if k not in qwhitespaces:
+                if k not in whitespaces_set:
                     tokens.append(k)
                 char_index += len(k)
                 prev_char_index = char_index
