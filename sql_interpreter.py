@@ -55,9 +55,21 @@ class qseparators(StrEnum):
     SEMICOLON = ';'
     COMMA = ','
 
+# When doing arithmetic, the right order of resolution is needed. 
+# The precedence map guarentees this: Higher number means more precedence
+PRECEDENCE = {
+    'OR': 10,
+    'AND': 20,
+    '=': 30, '!=': 30, '<': 30, '>': 30, '<=': 30, '>=': 30,
+    '+': 40, '-': 40,
+    '*': 50, '/': 50
+}
+
 token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
 keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
 whitespaces_set = set([e.value for e in qwhitespaces])
+
+comparators_arithmatic_symbols = set([e.value for e in qcomparators] + [e.value for e in qarithmaticoperators])
 
 def tokenize(query: str) -> list[str]:
     """The goal is to split the function by whitespace, comma, dot and semicolon."""
@@ -258,7 +270,8 @@ class Parser:
             direction = 'ASC'
             current = self.stream.current()
             if current in ['ASC', 'DESC']:
-                direction = self.stream.match(current)
+                direction = current
+                self.stream.advance()
                 
             sort_items.append(SortItem(col_ref, direction))
             
@@ -336,9 +349,13 @@ class Parser:
         
         if current.startswith("'") and current.endswith("'") or current.isdigit():
             col = self._parse_literal()
-        else:
-            table, col_name = self._parse_column_identifier()
-            col = ColumnRef(table, col_name)
+            col.alias = self._parse_alias()
+            return col
+        if current == '(' or self.stream.peek() in comparators_arithmatic_symbols:
+            col = self._parse_comparison()
+            col.alias = self._parse_alias()
+        table, col_name = self._parse_column_identifier()
+        col = ColumnRef(table, col_name)
         col.alias = self._parse_alias()
         return col
 
@@ -430,7 +447,7 @@ class Parser:
         
         # Check for comparison operator
         comparison_op = self.stream.current()
-        if comparison_op in [e.value for e in qcomparators]:
+        if comparison_op in comparators_arithmatic_symbols:
             self.stream.advance()
             right_operand = self._parse_operand()
             return Comparison(comparison_op, left_operand, right_operand)
@@ -466,9 +483,3 @@ class Parser:
         
         # Otherwise, assume it's a Column Reference (identifier)
         return ColumnRef(*self._parse_column_identifier())
-
-
-
-if __name__ == "__main__":
-    pass
-

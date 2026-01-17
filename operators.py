@@ -1,8 +1,10 @@
 import abc
-from typing import Generator, List, Any
+from ast import Call
+from typing import Callable, Generator, List, Any
 from functools import cmp_to_key
 from dataclasses import dataclass
 from typing import Generator, List, Any, Optional  # <--- Added Optional here
+import operator
 
 
 from syntax_tree import ProjectionTarget
@@ -45,12 +47,19 @@ comparison_operators = {
     '>': lambda x, y: x > y,
     '<': lambda x, y: x < y,
     '>=': lambda x, y: x >= y,
-    '<=': lambda x, y: x <= y
+    '<=': lambda x, y: x <= y,
+    '+': lambda x, y: x + y
 }
 
 logical_operators = {
     'AND': lambda x, y: x and y,
     'OR': lambda x, y: x or y
+}
+
+OPERATOR_MAP = {
+    '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
+    '=': operator.eq, '!=': operator.ne, '>': operator.gt, '<': operator.lt,
+    '>=': operator.ge, '<=': operator.le
 }
 
 class LogicalPredicate(Predicate):
@@ -100,13 +109,14 @@ class ScanOperator(Operator):
         return f"{indent}* TableScan (Source: {self.table_name})"
 
 class Filter(Operator):
-    def __init__(self, predicate: Predicate, parent: Operator):
+    def __init__(self, predicate: Callable, parent: Operator):
         self.predicate = predicate
         self.parent = parent
 
     def next(self):
         for row in self.parent.next():
-            if self.predicate.evaluate(row):
+            # if self.predicate.evaluate(row):
+            if self.predicate(row):
                 yield row
 
     def get_output_schema(self) -> Schema:
@@ -127,9 +137,11 @@ class Projection(Operator):
             if t.index is not None:
                 # For index expressions (col ref, agg call) at the value at the row's index
                 self.extractors.append(lambda row, i=t.index: row[i])
-            else:
+            elif t.value is not None:
                 # Literal values just take value regardless of the row
                 self.extractors.append(lambda row, v=t.value: v)
+            elif t.extractor is not None:
+                self.extractors.append(t.extractor)
 
     def next(self):
         for row in self.parent.next():

@@ -26,7 +26,6 @@ class DatabaseEngine:
             stream = TokenStream(tokens)
             parser = Parser(stream) 
             ast_root = parser.parse()
-
             planner = QueryPlanner(self.catalog, self.buffer_manager)
             query_plan_root: Operator = planner.plan_query(ast_root)
 

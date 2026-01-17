@@ -1,10 +1,9 @@
-from typing import List
+from typing import List, Callable
+import operator
 from syntax_tree import (
     ASTNode, BinaryOp, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
-    TableRef, AggregateCall, Join, Expression, Star
-)
-from operators import (
-    Filter, Predicate, ScanOperator, Projection, Sorter, Limit, Aggregate,
+    TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
+from operators import ( Filter, Predicate, ScanOperator, Projection, Sorter, Limit, Aggregate,
     Distinct, ComparisonPredicate, LogicalPredicate, NestedLoopJoin,
     AggregateSpec, Operator
 )
@@ -13,6 +12,15 @@ from schema import ColumnInfo, Schema
 
 class ParserError(Exception):
     pass
+
+
+OPERATOR_MAP = {
+    '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
+    '=': operator.eq, '!=': operator.ne, '>': operator.gt, '<': operator.lt,
+    '>=': operator.ge, '<=': operator.le,
+    'AND': lambda x, y: bool(x) and bool(y),
+    'OR':  lambda x, y: bool(x) or bool(y),
+}
 
 class QueryPlanner:
     def __init__(self, catalog: Catalog, buffer_manager):
@@ -31,8 +39,8 @@ class QueryPlanner:
         # 2. WHERE
         if stmt.where_clause:
             input_schema = plan.get_output_schema()
-            predicate = self._build_predicate(stmt.where_clause, input_schema)
-            plan = Filter(predicate, plan)
+            predicate_fn = self._compile_expression(stmt.where_clause, input_schema)
+            plan = Filter(predicate_fn, plan)
 
         # 3. GROUP BY & AGGREGATE
         # Aggregates change the schema: Output = [Group Keys] + [Agg Results]
@@ -58,6 +66,34 @@ class QueryPlanner:
             plan = self._plan_projection(stmt.columns, plan)
 
         return plan
+
+    def _compile_expression(self, expr: Expression, schema: Schema) -> Callable:
+        """
+        Recursively compiles an AST expression into a callable function.
+        Usage: func(row) -> value
+        """
+        
+        if isinstance(expr, Literal):
+            return lambda row, v=expr.value: v
+
+        if isinstance(expr, ColumnRef):
+            idx = schema.resolve(expr.table, expr.name)
+            return lambda row, i=idx: row[i]
+
+        if isinstance(expr, AggregateCall):
+            idx = schema.resolve(None, expr.get_lookup_name())
+            return lambda row, i=idx: row[i]
+
+        if isinstance(expr, BinaryOp):
+            left_fn = self._compile_expression(expr.left, schema)
+            right_fn = self._compile_expression(expr.right, schema)
+            
+            op_fn = OPERATOR_MAP[expr.op]
+            
+            return lambda row: op_fn(left_fn(row), right_fn(row))
+
+        raise ValueError(f"Planner Error: Do not know how to compile AST node {type(expr)}")
+
 
     def _plan_from(self, node) -> ScanOperator | NestedLoopJoin:
         if isinstance(node, TableRef):
@@ -119,11 +155,21 @@ class QueryPlanner:
         
         all_targets: List[ProjectionTarget] = []
         for expr in columns:
-            all_targets += expr.bind(input_schema)
 
-        new_schema = Schema([t.info for t in all_targets])
+            if isinstance(expr, Star):
+                for col_info in input_schema.columns:
+                    idx = input_schema.resolve(*col_info.full_name.split('.')) 
+                    lambda row, i=idx: row[i]
+                    all_targets.append(ProjectionTarget(col_info, extractor=lambda row, i=idx: row[i]))
+            else:
+                extractor = self._compile_expression(expr, input_schema)
+                name = expr.alias if expr.alias else expr.get_lookup_name()
+                
+                all_targets.append(ProjectionTarget(ColumnInfo(name), extractor=extractor))
+
+        output_schema = Schema([t.info for t in all_targets])
         
-        return Projection(all_targets, new_schema, plan)
+        return Projection(all_targets, output_schema, plan)
 
     def _plan_order_by(self, order_by_clause, plan) -> Sorter:
         schema: Schema = plan.get_output_schema()

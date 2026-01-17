@@ -1,17 +1,18 @@
 from __future__ import annotations
 import abc
-from typing import Any, List
+from typing import Any, List, Callable
 
 from schema import Schema, ColumnInfo
 
 class ProjectionTarget:
     """A small container for what the Projection operator needs."""
-    def __init__(self, col_info: ColumnInfo, index: None | int = None, value: None | Any = None):
-        if index is None and value is None:  # "is None" because "not index" would also be triggered by 0 (same for value empties)
+    def __init__(self, col_info: ColumnInfo, index: None | int = None, value: None | Any = None, extractor: None | Callable = None):
+        if index is None and value is None and extractor is None:  # "is None" because "not index" would also be triggered by 0 (same for value empties)
             raise Exception(f"ProjectionTarget index is None and also value is None. This is not allowed.")
         self.info = col_info
         self.index = index
         self.value = value
+        self.extractor = extractor
 
 class ASTNode:
     """Base class for all AST nodes."""
@@ -144,14 +145,19 @@ class LimitClause(ASTNode):
     def __init__(self, count):
         self.count = count # Literal node (integer)
 
-class BinaryOp(ASTNode):
+class BinaryOp(Expression):
     """Base class for binary operators (comparisons, arithmetic, logic)."""
     def __init__(self, op: str, left: BinaryOp | Expression, right: BinaryOp | Expression):
         self.op = op      # Operator string (e.g., '=', '>', 'AND')
         self.left = left  # Left-hand side AST node
         self.right = right # Right-hand side AST node
 
+    def get_lookup_name(self):
+        return f"{self.left.get_lookup_name()} {self.op} {self.right.get_lookup_name()}"
+
 class Comparison(BinaryOp):
+    pass
+class Arithmetic(BinaryOp):
     pass
 class LogicalExpression(BinaryOp):
     pass
