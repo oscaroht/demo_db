@@ -1,6 +1,6 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star
+from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp
 import re
 
 class qtype(StrEnum):
@@ -182,7 +182,7 @@ class Parser:
         where_clause = None
         if self.stream.current() == qtrans.WHERE:
             self.stream.match(qtrans.WHERE)
-            where_clause = self._parse_logical_expression()
+            where_clause = self._parse_expression(0)
             
         group_by_clause = None
         if self.stream.current() == qtrans.GROUP:
@@ -264,7 +264,7 @@ class Parser:
         sort_items = []
         while True:
             # Column name reference
-            col_ref = self._parse_expression()
+            col_ref = self._parse_expression(0)
             
             # Check for optional direction (ASC/DESC)
             direction = 'ASC'
@@ -301,7 +301,14 @@ class Parser:
         
         # Parse one or more columns/aggregates separated by commas
         while True:
-            columns.append(self._parse_expression())
+            expr = self._parse_expression(0)
+            
+            if self.stream.current() == qtrans.AS:
+                self.stream.match(qtrans.AS)
+                expr.alias = self.stream.current()
+                self.stream.advance()
+                
+            columns.append(expr)
             
             if self.stream.current() == qseparators.COMMA:
                 self.stream.match(qseparators.COMMA)
@@ -310,8 +317,57 @@ class Parser:
                     
         return columns
 
-    
-    def _parse_expression(self) -> Expression:
+    def _parse_expression(self, min_precedence=0) -> Expression:
+        left = self._parse_primary()
+        while True:
+            op = self.stream.current()
+            if op not in PRECEDENCE or PRECEDENCE[op] < min_precedence:
+                break
+            self.stream.advance()
+            right = self._parse_expression(PRECEDENCE[op] + 1)
+            left = BinaryOp(op, left, right)
+        return left
+
+    def _parse_primary(self) -> Expression:
+        """Handles the atoms of an expression: (expr), Literal, Column, Aggregates."""
+        token = self.stream.current()
+
+        if token == '(':
+            self.stream.match('(')
+            expr = self._parse_expression(0) # Reset precedence inside parens
+            self.stream.match(')')
+            return expr
+
+        if token == '*':
+            self.stream.advance()
+            return Star()
+
+        # Check for aggregates
+        if token in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
+            function_name = self.stream.match(token)
+            self.stream.match('(')
+            is_distinct = False 
+            # Check for COUNT(DISTINCT ..)
+            if token == qtrans.COUNT and self.stream.current() == qtrans.DISTINCT:
+                is_distinct = True
+                self.stream.advance()
+            # Check for COUNT(*)
+            if self.stream.current() == '*':
+                self.stream.match('*')
+                aggcol = Star()
+            else:
+                aggcol = self._parse_expression(0)
+            
+            self.stream.match(')')
+            return AggregateCall(function_name, aggcol, is_distinct=is_distinct)
+
+        # Handle Literals and Columns (Using your existing logic)
+        if token.startswith("'") or token.isdigit() or '.' in token or token.replace('.','',1).isdigit():
+            return self._parse_operand()
+
+        return ColumnRef(*self._parse_column_identifier())
+        
+    def _parse_expression_old(self) -> Expression:
         """
         Parses a single column or aggregate function call.
         (e.g., id, name, COUNT(*), MAX(price), name as first_name)

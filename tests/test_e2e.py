@@ -615,3 +615,89 @@ def test_join_aggregate_complex_alias(engine):
     results = execute_query_and_get_results(engine, query)
     
     assert set(results) == {(5,)}
+
+
+
+# 1. Simple Arithmetic in SELECT
+def test_select_basic_arithmetic(engine):
+    """Test basic addition and multiplication in the projection."""
+    query = "SELECT id + 10, salary * 1.1 AS bonus FROM employee WHERE id = 1;"
+    results = execute_query_and_get_results(engine, query)
+    # Alice (id 1): 1+10=11, 60000*1.1=66000.0
+    assert results == [(11, 66000.0)]
+
+# 2. Arithmetic with Aliases
+def test_select_arithmetic_alias(engine):
+    """Ensure the alias doesn't break the math and is accessible."""
+    query = "SELECT name, age - 5 AS younger_age FROM employee WHERE id = 2;"
+    results = execute_query_and_get_results(engine, query)
+    # Bob (age 22): 22-5=17
+    assert results == [('Bob', 17)]
+
+# 3. Arithmetic in WHERE clause
+def test_where_arithmetic_comparison(engine):
+    """Test id + 1 = 2 logic in the filter."""
+    query = "SELECT name FROM employee WHERE id + 1 = 3;"
+    results = execute_query_and_get_results(engine, query)
+    # id + 1 = 3 means id = 2 (Bob)
+    assert results == [('Bob',)]
+
+# 4. Nested Arithmetic (Precedence)
+def test_arithmetic_precedence(engine):
+    """Test that * happens before + (Pratt Parsing check)."""
+    query = "SELECT id, 2 + 3 * 10 AS calc FROM employee WHERE id = 1;"
+    results = execute_query_and_get_results(engine, query)
+    # 2 + (3 * 10) = 32. If left-to-right (2+3)*10 = 50.
+    assert results == [(1, 32)]
+
+# 5. Arithmetic with Multiple Columns
+def test_multi_column_arithmetic(engine):
+    """Test operations involving two different columns."""
+    # Assuming salary / age is a valid (if strange) metric
+    query = "SELECT id, salary / age FROM employee WHERE id = 5;"
+    results = execute_query_and_get_results(engine, query)
+    # Eve: 30000 / 19 = 1578.947...
+    assert results == [(5, 30000 / 19)]
+
+# 6. Boolean Logic (AND/OR) with Arithmetic
+def test_complex_logical_arithmetic(engine):
+    """Test nested logic: (id > 5 AND age < 25) OR salary = 80000"""
+    query = "SELECT name FROM employee WHERE (id > 5 AND age < 25) OR salary = 80000;"
+    results = execute_query_and_get_results(engine, query)
+    # id > 5 AND age < 25: Fay (6, 22), Hank (8, 22), Ivy (9, 25 - wait, age < 25 so Ivy excluded)
+    # salary = 80000: Grace (7)
+    # Expected: Fay, Grace, Hank
+    assert results == [('Fay',), ('Grace',), ('Hank',)]
+
+# 7. Aggregate with Arithmetic
+def test_aggregate_arithmetic(engine):
+    """Test that we can perform math on the result of an aggregate (if your planner supports post-agg projection)."""
+    # This tests the 'Aggregate as Primary' logic
+    query = "SELECT SUM(salary) / 1000 AS total_k FROM employee WHERE city = 'LA';"
+    results = execute_query_and_get_results(engine, query)
+    # LA: Dave (70k) + Hank (70k) = 140k. 140k / 1000 = 140.0
+    assert results == [(140.0,)]
+
+# 8. Join with Arithmetic Condition
+def test_join_arithmetic_condition(engine):
+    """Test a join where the ON condition involves math."""
+    query = "SELECT e.name, c.id FROM employee AS e JOIN contract AS c ON e.id = c.employee_id WHERE c.id = 5;"
+    results = execute_query_and_get_results(engine, query)
+    # Contract 5 is for employee_id 3 (Charlie)
+    assert results == [('Charlie', 5)]
+
+# 9. Parentheses and Unary-like behavior
+def test_parentheses_precedence(engine):
+    """Test that () forces precedence."""
+    query = "SELECT (2 + 3) * 10 AS calc FROM employee WHERE id = 1;"
+    results = execute_query_and_get_results(engine, query)
+    # (2 + 3) * 10 = 50
+    assert results == [(50,)]
+
+# 10. Floating Point and String Equality
+def test_float_and_string_comparison(engine):
+    """Test filtering with floats and string literals."""
+    query = "SELECT id FROM employee WHERE salary > 59999.99 AND city = 'NY' ORDER BY id ASC;"
+    results = execute_query_and_get_results(engine, query)
+    # NY salary > 59999.99: Alice (1, 60k), Grace (7, 80k)
+    assert results == [(1,), (7,)]

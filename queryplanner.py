@@ -1,10 +1,10 @@
 from typing import List, Callable
 import operator
 from syntax_tree import (
-    ASTNode, BinaryOp, ProjectionTarget, SelectStatement, LogicalExpression, Comparison,
+    ASTNode, BinaryOp, ProjectionTarget, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
-from operators import ( Filter, Predicate, ScanOperator, Projection, Sorter, Limit, Aggregate,
-    Distinct, ComparisonPredicate, LogicalPredicate, NestedLoopJoin,
+from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
+    Distinct, NestedLoopJoin,
     AggregateSpec, Operator
 )
 from catalog import Catalog
@@ -115,7 +115,7 @@ class QueryPlanner:
             
             # Concatenate schemas using the new Schema object logic
             combined_schema = left.get_output_schema() + right.get_output_schema()
-            predicate = self._build_predicate(node.condition, combined_schema)
+            predicate = self._compile_expression(node.condition, combined_schema)
             
             return NestedLoopJoin(left, right, predicate)
 
@@ -178,26 +178,6 @@ class QueryPlanner:
             target = item.column.bind(schema)[0]
             sort_keys.append((target.index, item.direction == "DESC"))
         return Sorter(sort_keys, plan)
-
-    def _build_predicate(self, expr: BinaryOp, schema: Schema) -> Predicate:
-        if isinstance(expr, Comparison):
-                target_left = expr.left.bind(schema)[0]
-                target_right = expr.right.bind(schema)[0]
-                
-                return ComparisonPredicate(
-                    expr.op, 
-                    val1=target_left.value,   # Will be None for columns
-                    val2=target_right.value,  # Will be None for columns
-                    col_idx1=target_left.index, # Will be None for literals
-                    col_idx2=target_right.index  # Will be None for literals
-                )
-
-        if isinstance(expr, LogicalExpression):
-            left = self._build_predicate(expr.left, schema)
-            right = self._build_predicate(expr.right, schema)
-            return LogicalPredicate(expr.op, left, right)
-    
-        raise TypeError(f"Unsupported expression: {type(expr)}")
 
     def _has_aggregates(self, columns) -> bool:
         return any(isinstance(c, AggregateCall) for c in columns)

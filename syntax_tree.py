@@ -163,7 +163,7 @@ class LogicalExpression(BinaryOp):
     pass
 class GroupByClause(ASTNode):
     """Represents the GROUP BY clause: a list of ColumnRef nodes."""
-    def __init__(self, columns):
+    def __init__(self, columns: List[ColumnRef]):
         self.columns = columns # List of ColumnRef nodes
  
 class Join(ASTNode):

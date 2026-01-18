@@ -358,7 +358,7 @@ class NestedLoopJoin(Operator):
     with a hash join. 
     """
 
-    def __init__(self, left: Operator, right: Operator, predicate: Predicate):
+    def __init__(self, left: Operator, right: Operator, predicate: Callable):
         self.left = left
         self.right = right
         self.predicate = predicate
@@ -371,7 +371,7 @@ class NestedLoopJoin(Operator):
         for left_row in self.left.next():
             for right_row in self._right_rows:
                 combined_row = left_row + right_row
-                if self.predicate.evaluate(combined_row):
+                if self.predicate(combined_row):
                     yield combined_row
 
     def get_output_schema(self) -> Schema:
