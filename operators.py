@@ -2,10 +2,8 @@ import abc
 from typing import Callable, Generator, List, Any, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
-import operator
 
 from schema import Schema
-from syntax_tree import ProjectionTarget
 Row = tuple[Any, ...]
 
 @dataclass
