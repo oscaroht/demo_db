@@ -37,6 +37,7 @@ class qarithmaticoperators(StrEnum):
     PRD = '*'
     OB = '('
     CB = ')'
+    MOD = '%'
 
 class qcomparators(StrEnum):
     EQ = '='
@@ -62,7 +63,7 @@ PRECEDENCE = {
     'AND': 20,
     '=': 30, '!=': 30, '<': 30, '>': 30, '<=': 30, '>=': 30,
     '+': 40, '-': 40,
-    '*': 50, '/': 50
+    '*': 50, '/': 50, '%': 50
 }
 
 token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]

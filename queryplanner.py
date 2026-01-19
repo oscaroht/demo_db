@@ -6,20 +6,13 @@ from syntax_tree import (
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
     Distinct, NestedLoopJoin, AggregateSpec, Operator
 )
-# We define ProjectionTarget locally or import if available. 
-# Since it was removed from syntax_tree in the previous step, let's keep it simple:
-class ProjectionTarget:
-    def __init__(self, col_info, extractor=None):
-        self.info = col_info
-        self.extractor = extractor
-
 from catalog import Catalog
 from schema import ColumnIdentifier, Schema
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
     '=': operator.eq, '!=': operator.ne, '>': operator.gt, '<': operator.lt,
-    '>=': operator.ge, '<=': operator.le,
+    '>=': operator.ge, '<=': operator.le, '%': operator.mod,
     'AND': lambda x, y: bool(x) and bool(y),
     'OR':  lambda x, y: bool(x) or bool(y),
 }
@@ -140,26 +133,27 @@ class QueryPlanner:
 
         specs: List[AggregateSpec] = []
         agg_cols: List[ColumnIdentifier] = []
-        
-        for col in stmt.columns:
-            if isinstance(col, AggregateCall):
-                # Resolve the argument extractor
-                if isinstance(col.argument, Star):
-                    # COUNT(*) -> just return 1 (not None) to count the row
-                    arg_extractor = lambda row: 1
-                else:
-                    # COUNT(x), SUM(x+y) -> Compile the argument
-                    arg_extractor = self._compile_expression(col.argument, input_schema)
 
-                lookup_name = col.get_lookup_name()
-                
-                specs.append(AggregateSpec(
-                    function=col.function_name,
-                    extractor=arg_extractor, # Pass the callable
-                    is_distinct=col.is_distinct,
-                    output_name=lookup_name
-                ))
-                agg_cols.append(ColumnIdentifier(name=lookup_name, alias=col.alias, is_aggregate=True))
+        all_aggs = []
+        for col in stmt.columns:
+            all_aggs.extend(self._find_aggregates(col))
+
+        unique_aggs = {agg.get_lookup_name(): agg for agg in all_aggs}
+
+        for lookup_name, agg_node in unique_aggs.items():
+            if isinstance(agg_node.argument, Star):
+                arg_extractor = lambda row: 1
+            else:
+                arg_extractor = self._compile_expression(agg_node.argument, input_schema)
+
+            specs.append(AggregateSpec(
+                function=agg_node.function_name,
+                extractor=arg_extractor,
+                is_distinct=agg_node.is_distinct,
+                output_name=lookup_name
+            ))
+            
+            agg_cols.append(ColumnIdentifier(name=lookup_name, alias=agg_node.alias, is_aggregate=True))
 
         output_schema = Schema(group_cols + agg_cols)
         return Aggregate(group_extractors, specs, output_schema, plan)
@@ -192,5 +186,16 @@ class QueryPlanner:
             
         return Sorter(sort_keys, plan)
 
-    def _has_aggregates(self, columns) -> bool:
-        return any(isinstance(c, AggregateCall) for c in columns)
+    def _has_aggregates(self, columns: List[Expression]) -> bool:
+        for col in columns:
+            if self._find_aggregates(col):
+                return True
+        return False
+
+    def _find_aggregates(self, expr: Expression) -> List[AggregateCall]:
+        """Recursively search for AggregateCalls inside an expression tree."""
+        if isinstance(expr, AggregateCall):
+            return [expr]
+        if isinstance(expr, BinaryOp):
+            return self._find_aggregates(expr.left) + self._find_aggregates(expr.right)
+        return []
