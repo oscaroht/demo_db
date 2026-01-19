@@ -1,18 +1,6 @@
 from __future__ import annotations
 import abc
-from typing import Any, List, Callable
-
-from schema import Schema, ColumnInfo
-
-class ProjectionTarget:
-    """A small container for what the Projection operator needs."""
-    def __init__(self, col_info: ColumnInfo, index: None | int = None, value: None | Any = None, extractor: None | Callable = None):
-        if index is None and value is None and extractor is None:  # "is None" because "not index" would also be triggered by 0 (same for value empties)
-            raise Exception(f"ProjectionTarget index is None and also value is None. This is not allowed.")
-        self.info = col_info
-        self.index = index
-        self.value = value
-        self.extractor = extractor
+from typing import List
 
 class ASTNode:
     """Base class for all AST nodes."""
@@ -58,10 +46,6 @@ class Expression(ASTNode):
         """Returns the string used to find this expression in a Schema."""
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def bind(self, schema: Schema) -> List[ProjectionTarget]:
-        """Method to map the schema to a projection"""
-        raise NotImplementedError
 
 class Star(Expression):
     """Represents the '*'."""
@@ -69,10 +53,6 @@ class Star(Expression):
 
     def get_lookup_name(self) -> str:
         return "*"
-
-    def bind(self, schema: Schema) -> List[ProjectionTarget]:
-        return [ProjectionTarget(col_info, index=i) for i, col_info in enumerate(schema.columns)]
-
 
 class Literal(Expression):
     """Represents a constant value (number, string)."""
@@ -83,9 +63,6 @@ class Literal(Expression):
     def get_lookup_name(self) -> str:
         return str(self.value)
 
-    def bind(self, schema: Schema) -> List[ProjectionTarget]:
-        return [ProjectionTarget(ColumnInfo(str(self.value), self.alias), value=self.value)]
-
 class ColumnRef(Expression):
     """Represents a column name reference."""
     def __init__(self, table: None | str, name: str, alias: None | str = None):
@@ -95,11 +72,6 @@ class ColumnRef(Expression):
 
     def get_lookup_name(self) -> str:
         return self.name
-
-    def bind(self, schema: Schema) -> List[ProjectionTarget]:
-        idx = schema.resolve(self.table, self.name)
-        col_name = schema.columns[idx].full_name
-        return [ProjectionTarget(ColumnInfo(col_name, self.alias), index=idx)]
 
 class AggregateCall(Expression):
     """Represents an aggregate function call (e.g., COUNT(*), MAX(col))."""
@@ -113,11 +85,6 @@ class AggregateCall(Expression):
         dist = 'DISTINCT ' if self.is_distinct else ''
         # Recursively call get_lookup_name on the argument!
         return f"{self.function_name}({dist}{self.argument.get_lookup_name()})"
-
-    def bind(self, schema: Schema) -> List[ProjectionTarget]:
-        name = self.get_lookup_name()
-        idx = schema.resolve(None, name)
-        return [ProjectionTarget(ColumnInfo(name, self.alias), index=idx)]
 
 class TableRef(ASTNode):
     def __init__(self, name: str, alias: None | str =None):

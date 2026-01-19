@@ -167,18 +167,18 @@ class QueryPlanner:
     def _plan_projection(self, columns: List[Expression], plan: Operator) -> Projection:
         input_schema: Schema = plan.get_output_schema()
         
-        all_targets: List[ProjectionTarget] = []
+        extractors = []
+        schema_columns_columns = []
         for expr in columns:
             if isinstance(expr, Star):
                 for i, col_info in enumerate(input_schema.columns):
-                    all_targets.append(ProjectionTarget(col_info, extractor=lambda row, idx=i: row[idx]))
+                    extractors.append(lambda row, idx=i: row[idx])
+                    schema_columns_columns.append(col_info)
             else:
-                extractor = self._compile_expression(expr, input_schema)
-                name = expr.alias if expr.alias else expr.get_lookup_name()
-                all_targets.append(ProjectionTarget(ColumnInfo(name), extractor=extractor))
+                extractors.append(self._compile_expression(expr, input_schema))
+                schema_columns_columns.append(ColumnInfo(expr.get_lookup_name(), expr.alias))
 
-        output_schema = Schema([t.info for t in all_targets])
-        return Projection(all_targets, output_schema, plan)
+        return Projection(extractors, Schema(schema_columns_columns), plan)
 
     def _plan_order_by(self, order_by_clause, plan) -> Sorter:
         schema: Schema = plan.get_output_schema()

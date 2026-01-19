@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import operator
 
 from schema import Schema
+from syntax_tree import ProjectionTarget
 Row = tuple[Any, ...]
 
 @dataclass
@@ -66,18 +67,10 @@ class Filter(Operator):
         return '\n'.join(output)
 
 class Projection(Operator):
-    def __init__(self, targets: List, output_schema: Schema, parent: Operator):
-        # targets is List[ProjectionTarget] but avoiding circular import by just iterating
+    def __init__(self, extractors: List[Callable[[Row], Any]], output_schema: Schema, parent: Operator):
         self.output_schema = output_schema
         self.parent = parent
-        self.extractors = [] 
-        for t in targets:
-             if t.extractor is not None:
-                self.extractors.append(t.extractor)
-             elif t.index is not None:
-                 self.extractors.append(lambda row, i=t.index: row[i])
-             elif t.value is not None:
-                 self.extractors.append(lambda row, v=t.value: v)
+        self.extractors = extractors
 
     def next(self):
         for row in self.parent.next():
