@@ -164,7 +164,6 @@ class Limit(Operator):
         output.append(self.parent.display_plan(level + 1))
         return '\n'.join(output)
 
-# --- Aggregation States (Unchanged logic, just context) ---
 class AggregationState:
     def __init__(self): self.result = self._get_initial_value()
     def _get_initial_value(self): raise NotImplementedError
@@ -218,7 +217,7 @@ AGGREGATE_MAP = {
 
 class Aggregate(Operator):
     def __init__(self, group_extractors: List[Callable], specs: List[AggregateSpec], output_schema: Schema, parent: Operator):
-        self.group_extractors = group_extractors # List of callables
+        self.group_extractors = group_extractors
         self.specs = specs
         self.output_schema = output_schema
         self.parent = parent

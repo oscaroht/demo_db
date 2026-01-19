@@ -142,7 +142,7 @@ class Join(ASTNode):
 
 class SelectStatement(ASTNode):
     """Represents the entire SELECT query."""
-    def __init__(self, columns, from_clause: TableRef | Join, where_clause: None | BinaryOp = None, is_distinct=False, order_by_clause: None | OrderByClause = None, limit_clause: None | LimitClause =None, group_by_clause=None):
+    def __init__(self, columns, from_clause: TableRef | Join, where_clause: None | Expression = None, is_distinct=False, order_by_clause: None | OrderByClause = None, limit_clause: None | LimitClause =None, group_by_clause=None):
         self.columns = columns        # List of ColumnRef or AggregateCall nodes
         self.from_clause = from_clause
         self.where_clause = where_clause  # Logical condition AST node

@@ -5,7 +5,7 @@ from typing import List, Optional
 @dataclass(frozen=True)
 class ColumnIdentifier:
     name: str
-    qualifier: Optional[str] = None # Renamed from 'table' to 'qualifier'
+    qualifier: Optional[str] = None
     alias: Optional[str] = None
     is_aggregate: bool = False
 
