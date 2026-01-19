@@ -1,18 +1,20 @@
 from typing import List, Callable
 import operator
 from syntax_tree import (
-    ASTNode, BinaryOp, ProjectionTarget, SelectStatement,
+    ASTNode, BinaryOp, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
-    Distinct, NestedLoopJoin,
-    AggregateSpec, Operator
+    Distinct, NestedLoopJoin, AggregateSpec, Operator
 )
+# We define ProjectionTarget locally or import if available. 
+# Since it was removed from syntax_tree in the previous step, let's keep it simple:
+class ProjectionTarget:
+    def __init__(self, col_info, extractor=None):
+        self.info = col_info
+        self.extractor = extractor
+
 from catalog import Catalog
 from schema import ColumnInfo, Schema
-
-class ParserError(Exception):
-    pass
-
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
@@ -43,15 +45,15 @@ class QueryPlanner:
             plan = Filter(predicate_fn, plan)
 
         # 3. GROUP BY & AGGREGATE
-        # Aggregates change the schema: Output = [Group Keys] + [Agg Results]
         if stmt.group_by_clause or self._has_aggregates(stmt.columns):
             plan = self._plan_aggregate(stmt, plan)
 
         # 4. DISTINCT (Pre-projection)
         if stmt.is_distinct and not stmt.group_by_clause:
             plan = self._plan_projection(stmt.columns, plan)
-            schema = plan.get_output_schema()
-            plan = Distinct(list(range(len(schema.columns))), plan)        
+            projected_schema = plan.get_output_schema()
+            extractors = [lambda row, i=idx: row[i] for idx in range(len(projected_schema.columns))]
+            plan = Distinct(extractors, plan)
 
         # 5. ORDER BY
         if stmt.order_by_clause:
@@ -61,7 +63,7 @@ class QueryPlanner:
         if stmt.limit_clause:
             plan = Limit(stmt.limit_clause.count, plan)
 
-        # 7. FINAL PROJECTION (If not already handled by Distinct)
+        # 7. FINAL PROJECTION
         if not (stmt.is_distinct and not stmt.group_by_clause):
             plan = self._plan_projection(stmt.columns, plan)
 
@@ -70,9 +72,7 @@ class QueryPlanner:
     def _compile_expression(self, expr: Expression, schema: Schema) -> Callable:
         """
         Recursively compiles an AST expression into a callable function.
-        Usage: func(row) -> value
         """
-        
         if isinstance(expr, Literal):
             return lambda row, v=expr.value: v
 
@@ -81,19 +81,18 @@ class QueryPlanner:
             return lambda row, i=idx: row[i]
 
         if isinstance(expr, AggregateCall):
+            # Used when referencing an aggregate result in ORDER BY or HAVING
+            # The schema passed here must be the output of the Aggregate operator
             idx = schema.resolve(None, expr.get_lookup_name())
             return lambda row, i=idx: row[i]
 
         if isinstance(expr, BinaryOp):
             left_fn = self._compile_expression(expr.left, schema)
             right_fn = self._compile_expression(expr.right, schema)
-            
             op_fn = OPERATOR_MAP[expr.op]
-            
             return lambda row: op_fn(left_fn(row), right_fn(row))
 
         raise ValueError(f"Planner Error: Do not know how to compile AST node {type(expr)}")
-
 
     def _plan_from(self, node) -> ScanOperator | NestedLoopJoin:
         if isinstance(node, TableRef):
@@ -101,7 +100,6 @@ class QueryPlanner:
             alias = node.alias or node.name
             cols = self.catalog.get_all_column_names(table_name)
             
-            # Create a Schema object immediately
             schema = Schema([ColumnInfo(f"{alias}.{c}") for c in cols])
             return ScanOperator(
                 table_name=table_name,
@@ -113,7 +111,6 @@ class QueryPlanner:
             left = self._plan_from(node.left)
             right = self._plan_from(node.right)
             
-            # Concatenate schemas using the new Schema object logic
             combined_schema = left.get_output_schema() + right.get_output_schema()
             predicate = self._compile_expression(node.condition, combined_schema)
             
@@ -124,59 +121,75 @@ class QueryPlanner:
     def _plan_aggregate(self, stmt: SelectStatement, plan) -> Aggregate:
         input_schema = plan.get_output_schema()
         
-        # Group indices
-        group_indices: List[int] = []
+        group_extractors: List[Callable] = []
         group_cols: List[ColumnInfo] = []
+        
         if stmt.group_by_clause:
             for col in stmt.group_by_clause.columns:
-                target: ProjectionTarget = col.bind(input_schema)[0]
-                if target.index is None:
-                    raise Exception("Group key should be a column index not literal value")
-                group_indices.append(target.index)
-                group_cols.append(target.info)
+                # Compile the group expression
+                extractor = self._compile_expression(col, input_schema)
+                group_extractors.append(extractor)
+                
+                # Determine name for the schema
+                if isinstance(col, ColumnRef):
+                    idx = input_schema.resolve(col.table, col.name)
+                    original_info = input_schema.columns[idx]
+                    group_cols.append(ColumnInfo(original_info.full_name))
+                else:
+                    group_cols.append(ColumnInfo(col.get_lookup_name()))
 
-        # Aggregates logic
         specs: List[AggregateSpec] = []
         agg_cols: List[ColumnInfo] = []
+        
         for col in stmt.columns:
             if isinstance(col, AggregateCall):
-                arg_targets: List[ProjectionTarget] = col.argument.bind(input_schema)
-                arg_idx = arg_targets[0].index if not isinstance(col.argument, Star) else None
-                
+                # Resolve the argument extractor
+                if isinstance(col.argument, Star):
+                    # COUNT(*) -> just return 1 (not None) to count the row
+                    arg_extractor = lambda row: 1
+                else:
+                    # COUNT(x), SUM(x+y) -> Compile the argument
+                    arg_extractor = self._compile_expression(col.argument, input_schema)
+
                 lookup_name = col.get_lookup_name()
-                specs.append(AggregateSpec(col.function_name, arg_idx, col.is_distinct, lookup_name))
-                agg_cols.append(ColumnInfo(lookup_name, col.alias))
+                
+                specs.append(AggregateSpec(
+                    function=col.function_name,
+                    extractor=arg_extractor, # Pass the callable
+                    is_distinct=col.is_distinct,
+                    output_name=lookup_name
+                ))
+                agg_cols.append(ColumnInfo(lookup_name, col.alias, is_aggregate=True))
 
         output_schema = Schema(group_cols + agg_cols)
-        return Aggregate(group_indices, specs, output_schema, plan)
+        return Aggregate(group_extractors, specs, output_schema, plan)
 
     def _plan_projection(self, columns: List[Expression], plan: Operator) -> Projection:
         input_schema: Schema = plan.get_output_schema()
         
         all_targets: List[ProjectionTarget] = []
         for expr in columns:
-
             if isinstance(expr, Star):
-                for col_info in input_schema.columns:
-                    idx = input_schema.resolve(*col_info.full_name.split('.')) 
-                    lambda row, i=idx: row[i]
-                    all_targets.append(ProjectionTarget(col_info, extractor=lambda row, i=idx: row[i]))
+                for i, col_info in enumerate(input_schema.columns):
+                    all_targets.append(ProjectionTarget(col_info, extractor=lambda row, idx=i: row[idx]))
             else:
                 extractor = self._compile_expression(expr, input_schema)
                 name = expr.alias if expr.alias else expr.get_lookup_name()
-                
                 all_targets.append(ProjectionTarget(ColumnInfo(name), extractor=extractor))
 
         output_schema = Schema([t.info for t in all_targets])
-        
         return Projection(all_targets, output_schema, plan)
 
     def _plan_order_by(self, order_by_clause, plan) -> Sorter:
         schema: Schema = plan.get_output_schema()
         sort_keys = []
+        
         for item in order_by_clause.sort_items:
-            target = item.column.bind(schema)[0]
-            sort_keys.append((target.index, item.direction == "DESC"))
+            # Compile the order expression (e.g., price * quantity)
+            # This allows sorting by values not explicitly in the SELECT list
+            extractor = self._compile_expression(item.column, schema)
+            sort_keys.append((extractor, item.direction == "DESC"))
+            
         return Sorter(sort_keys, plan)
 
     def _has_aggregates(self, columns) -> bool:
