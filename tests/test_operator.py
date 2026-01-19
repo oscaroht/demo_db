@@ -1,5 +1,5 @@
 from operators import Filter, Sorter, Aggregate, Limit, Distinct, ComparisonPredicate, LogicalPredicate, AggregateSpec
-from schema import Schema, ColumnInfo
+from schema import Schema, ColumnIdentifier
 
 class MockParent:
     """A dummy iterator to feed fixed data into the operators."""
@@ -26,7 +26,7 @@ TEST_DATA_FULL_SCHEMA = [
 ]
 
 def create_agg_schema(group_cols, agg_names):
-    cols = [ColumnInfo(name) for name in group_cols + agg_names]
+    cols = [ColumnIdentifier(name) for name in group_cols + agg_names]
     return Schema(cols)
 
 

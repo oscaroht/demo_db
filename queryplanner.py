@@ -14,7 +14,7 @@ class ProjectionTarget:
         self.extractor = extractor
 
 from catalog import Catalog
-from schema import ColumnInfo, Schema
+from schema import ColumnIdentifier, Schema
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
@@ -98,9 +98,9 @@ class QueryPlanner:
         if isinstance(node, TableRef):
             table_name = node.name
             alias = node.alias or node.name
-            cols = self.catalog.get_all_column_names(table_name)
+            cols: List[str] = self.catalog.get_all_column_names(table_name)
             
-            schema = Schema([ColumnInfo(f"{alias}.{c}") for c in cols])
+            schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])
             return ScanOperator(
                 table_name=table_name,
                 data_generator=self.buffer_manager.get_data_generator(table_name),
@@ -122,7 +122,7 @@ class QueryPlanner:
         input_schema = plan.get_output_schema()
         
         group_extractors: List[Callable] = []
-        group_cols: List[ColumnInfo] = []
+        group_cols: List[ColumnIdentifier] = []
         
         if stmt.group_by_clause:
             for col in stmt.group_by_clause.columns:
@@ -134,12 +134,12 @@ class QueryPlanner:
                 if isinstance(col, ColumnRef):
                     idx = input_schema.resolve(col.qualifier, col.name)
                     original_info = input_schema.columns[idx]
-                    group_cols.append(ColumnInfo(original_info.full_name))
+                    group_cols.append(original_info)
                 else:
-                    group_cols.append(ColumnInfo(col.get_lookup_name()))
+                    group_cols.append(ColumnIdentifier(name=col.get_lookup_name()))
 
         specs: List[AggregateSpec] = []
-        agg_cols: List[ColumnInfo] = []
+        agg_cols: List[ColumnIdentifier] = []
         
         for col in stmt.columns:
             if isinstance(col, AggregateCall):
@@ -159,7 +159,7 @@ class QueryPlanner:
                     is_distinct=col.is_distinct,
                     output_name=lookup_name
                 ))
-                agg_cols.append(ColumnInfo(lookup_name, col.alias, is_aggregate=True))
+                agg_cols.append(ColumnIdentifier(name=lookup_name, alias=col.alias, is_aggregate=True))
 
         output_schema = Schema(group_cols + agg_cols)
         return Aggregate(group_extractors, specs, output_schema, plan)
@@ -176,7 +176,7 @@ class QueryPlanner:
                     schema_columns_columns.append(col_info)
             else:
                 extractors.append(self._compile_expression(expr, input_schema))
-                schema_columns_columns.append(ColumnInfo(expr.get_lookup_name(), expr.alias))
+                schema_columns_columns.append(ColumnIdentifier(name=expr.get_lookup_name(), alias=expr.alias))
 
         return Projection(extractors, Schema(schema_columns_columns), plan)
 
