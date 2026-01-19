@@ -77,7 +77,7 @@ class QueryPlanner:
             return lambda row, v=expr.value: v
 
         if isinstance(expr, ColumnRef):
-            idx = schema.resolve(expr.table, expr.name)
+            idx = schema.resolve(expr.qualifier, expr.name)
             return lambda row, i=idx: row[i]
 
         if isinstance(expr, AggregateCall):
@@ -132,7 +132,7 @@ class QueryPlanner:
                 
                 # Determine name for the schema
                 if isinstance(col, ColumnRef):
-                    idx = input_schema.resolve(col.table, col.name)
+                    idx = input_schema.resolve(col.qualifier, col.name)
                     original_info = input_schema.columns[idx]
                     group_cols.append(ColumnInfo(original_info.full_name))
                 else:

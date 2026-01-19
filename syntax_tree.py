@@ -65,8 +65,8 @@ class Literal(Expression):
 
 class ColumnRef(Expression):
     """Represents a column name reference."""
-    def __init__(self, table: None | str, name: str, alias: None | str = None):
-        self.table = table.lower() if isinstance(table, str) else table
+    def __init__(self, qualifier: None | str, name: str, alias: None | str = None):
+        self.qualifier = qualifier.lower() if isinstance(qualifier, str) else qualifier
         self.name = name.lower()
         self.alias = alias
 
