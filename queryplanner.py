@@ -1,15 +1,18 @@
 from dataclasses import dataclass
+from enum import StrEnum, auto
 from typing import List, Callable
 import operator
 import buffermanager
 from syntax_tree import (
-    ASTNode, BinaryOp, SelectStatement,
-    TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
+    ASTNode, BinaryOp, InsertStatement, SelectStatement,
+    TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
+    CreateStatement) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
-    Distinct, NestedLoopJoin, AggregateSpec, Operator
+    Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert
 )
-from catalog import Catalog
+from catalog import Catalog, Table
 from schema import ColumnIdentifier, Schema
+from datetime import date, datetime
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
@@ -19,15 +22,58 @@ OPERATOR_MAP = {
     'OR':  lambda x, y: bool(x) or bool(y),
 }
 
+TYPE_MAP = {
+    'TEXT': str,
+    'INT': int,
+    'DATE': date,
+    'DATETIME': datetime
+}
+
+class Status(StrEnum):
+    SUCCESS = auto()
+
 class QueryPlanner:
     def __init__(self, catalog: Catalog, buffer_manager):
         self.catalog = catalog
         self.buffer_manager = buffer_manager
 
-    def plan_query(self, ast_root: ASTNode):
-        if not isinstance(ast_root, SelectStatement):
-            raise TypeError(f"Unsupported AST root: {type(ast_root)}")
-        return self._plan_select(ast_root)
+    def plan_query(self, ast_root: ASTNode) -> Operator:
+        if isinstance(ast_root, SelectStatement):
+            return self._plan_select(ast_root)
+        if isinstance(ast_root, CreateStatement):
+            return self._plan_create(ast_root)
+        if isinstance(ast_root, InsertStatement):
+            return self._plan_insert(ast_root)
+    
+    def _plan_create(self, node: CreateStatement):
+        print("CREATE PLANING")
+        native_types = [  TYPE_MAP[typ] for typ in node.column_types  ]
+        table = Table(node.table_name, node.column_names, native_types)
+        self.catalog.add_new_table(table)
+        return StatusOperator('SUCCESS')
+
+    def _plan_insert(self, node: InsertStatement):
+        table = self.catalog.tables.get(node.table_name)
+        if table is None:
+            raise Exception(f"Table {node.table_name} does not exist.")
+        for col in node.column_names:
+            if col not in table.column_names:
+                raise Exception(f"Column {col} not in table {node.table_name}.")
+
+        val_map = {col: i for i, col in enumerate(node.column_names)}
+        
+        column_indices = []
+        column_types = []
+        for tab_col in table.column_names:
+            if tab_col in val_map:
+                column_indices.append(val_map[tab_col])
+                column_types.append(val_map)
+            else:
+                column_indices.append(None)
+
+        gen = (row for row in node.values)
+
+        return Insert(table, gen, column_indices, self.buffer_manager, self.catalog)
 
     def _plan_select(self, stmt: SelectStatement):
         # 1. FROM & JOIN

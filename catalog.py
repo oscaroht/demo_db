@@ -27,7 +27,29 @@ class Page:
         self.data = data
         self.header: None | PageHeader = header
         self.is_dirty = is_dirty
+        self.bytes_length = HEADER_SIZE
+    
+    def has_space_for(self, row: Any) -> bool:
+        """Check if adding this row would exceed PAGE_SIZE."""
+        # recalculating this bytes size by serializing the page and returning the result is inefficient
+        # better would be to only calculate the new data. However, I do not think bytelen(data + [row])
+        # is equal to bytelength(data) + bytelength(row). Better would be to not use native types 
+        # and let everything be a bytes. For now this is find.
+        new_data_state = self.data + [row]
+        projected_size = len(pickle.dumps(new_data_state))
+        return (HEADER_SIZE + projected_size) <= PAGE_SIZE
 
+    def add_row(self, row: Any) -> bool:
+        """
+        Attempts to add a row. Returns True if successful, 
+        False if the page is full.
+        """
+        if self.has_space_for(row):
+            self.data.append(row)
+            self.is_dirty = True
+            return True
+        return False
+    
     @classmethod
     def from_bytes(cls, page_id: int, raw_data: bytes):
         header = PageHeader.from_buffer_copy(raw_data)
@@ -58,13 +80,15 @@ class Table:
     column_names: List[str]
     column_datatypes: List[Type]
     page_id: List[int] = field(default_factory=list)
-
+    last_page_id: None | int = None
 
 
 class Catalog:
     """Mock database schema information."""
     def __init__(self, tables: Iterable[Table]):
         self.tables = {table.table_name: table for table in tables}
+        self.free_page_ids = []
+        self.max_page_id = max([id for table in tables for id in table.page_id])
 
     def get_all_column_names(self, table_name) -> list[str]:
         table = self.tables.get(table_name.lower())
@@ -74,6 +98,21 @@ class Catalog:
 
     def get_all_page_ids(self, table_name) -> list[int]:
         return self.tables[table_name.lower()].page_id
+
+    def get_free_page_id(self, table_name) -> int:
+        if self.free_page_ids:
+            page_id = self.free_page_ids.pop(0)
+        else:
+            page_id = self.max_page_id
+            self.max_page_id += 1
+        self.tables[table_name.lower()].page_id.append(page_id)
+        return page_id
+
+    def add_new_table(self, table: Table):
+        name = table.table_name.lower()
+        if name in self.tables:
+            raise Exception("Table already exists")
+        self.tables[name] = table
 
     def to_page(self) -> Page:
         page = Page(0, self)

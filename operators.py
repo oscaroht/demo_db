@@ -2,8 +2,10 @@ import abc
 from typing import Callable, Generator, List, Any, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
+from catalog import Table, Catalog, Page
 
-from schema import Schema
+import catalog
+from schema import ColumnIdentifier, Schema
 Row = tuple[Any, ...]
 
 @dataclass
@@ -29,6 +31,17 @@ class Operator(abc.ABC):
         """Returns the column names that this operator outputs."""
         raise NotImplementedError
 
+class StatusOperator(Operator):
+    def __init__(self, status: str) -> None:
+        self.status = status
+    def next(self):
+        yield tuple([self.status])
+    def display_plan(self, level: int = 0) -> str:
+        pass
+    def get_output_schema(self) -> Schema:
+        return Schema([ColumnIdentifier('status')])
+
+
 class ScanOperator(Operator):
     def __init__(self, table_name: str, page_generator, schema: Schema):
         self.table_name = table_name
@@ -46,6 +59,43 @@ class ScanOperator(Operator):
     def display_plan(self, level=0) -> str:
         indent = '  ' * level
         return f"{indent}* TableScan (Source: {self.table_name})"
+
+class Insert(Operator):
+    def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], buffer_manager, catalog: Catalog):
+        self.table = table
+        self.data_generator = data_generator
+        self.column_indices = column_indices
+        self.buffer_manager = buffer_manager
+        self.catalog = catalog
+
+    def next(self):
+        for raw_val_tuple in self.data_generator:
+            new_row = []
+            for src_idx in self.column_indices:
+                if src_idx is not None:
+                    typ = self.table.column_datatypes[len(new_row)]
+                    new_row.append(typ(raw_val_tuple[src_idx]))
+                else:
+                    new_row.append(None) # Default/Null
+
+            page_id = self.table.last_page_id 
+            if page_id is None:
+                new_page_id = self.catalog.get_free_page_id(self.table.table_name)
+                page = Page(new_page_id, [])
+                self.buffer_manager.put(page)
+
+            page = self.buffer_manager.get(page_id)
+            page.add_row(tuple(new_row))
+        yield(tuple(['SUCCESS']))
+        
+    def display_plan(self, level=0) -> str:
+        indent = '  ' * level
+        return f"{indent}* Insert into: {self.table.table_name})"
+    def get_output_schema(self) -> Schema:
+        return Schema([ColumnIdentifier('status')])
+
+
+
 
 class Filter(Operator):
     def __init__(self, predicate: Callable, parent: Operator):

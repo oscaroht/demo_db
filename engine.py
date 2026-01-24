@@ -7,9 +7,10 @@ from typing import List
 from catalog import Catalog, Page
 from request import QueryRequest
 from result import QueryResult
-from queryplanner import QueryPlanner
+from queryplanner import QueryPlanner, Status
 from schema import Schema
 from sql_interpreter import tokenize, TokenStream, Parser
+from syntax_tree import CreateStatement
 
 class DatabaseEngine:
     def __init__(self, catalog, buffermanager):

@@ -7,16 +7,16 @@ class DiskManager:
         self.db_path = db_path
         # Create file if it doesn't exist
         if not os.path.exists(db_path):
+            catalog = Catalog.get_empty_catalog()
+            page = catalog.to_page()
             with open(db_path, 'wb') as f:
-                catalog = Catalog.get_empty_catalog()
-                page = catalog.to_page()
                 f.write(page.to_bytes())
 
     def read_page(self, page_id: int) -> Page:
         offset = page_id * PAGE_SIZE
         with open(self.db_path, 'rb') as f:
             f.seek(offset)
-            return Page(page_id, f.read(PAGE_SIZE))
+            return Page.from_bytes(page_id, f.read(PAGE_SIZE))
 
     def write_page(self, page: Page):
         data = page.to_bytes()

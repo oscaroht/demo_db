@@ -150,3 +150,15 @@ class SelectStatement(ASTNode):
         self.is_distinct = is_distinct
         self.order_by_clause = order_by_clause
         self.limit_clause = limit_clause
+
+class CreateStatement(ASTNode):
+    def __init__(self, table_name, column_names, column_types) -> None:
+        self.table_name = table_name
+        self.column_names = column_names
+        self.column_types = column_types
+
+class InsertStatement(ASTNode):
+    def __init__(self, table_name, column_names, values) -> None:
+        self.table_name = table_name
+        self.column_names = column_names
+        self.values = values

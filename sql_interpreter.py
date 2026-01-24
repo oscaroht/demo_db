@@ -1,6 +1,6 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp
+from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement
 import re
 
 class qtype(StrEnum):
@@ -8,6 +8,11 @@ class qtype(StrEnum):
     CREATE = 'CREATE'
     DELETE = 'DELETE'
     INSERT = 'INSERT'
+
+class qddl(StrEnum):
+    TABLE = 'TABLE'
+    DATABASE = 'DATABASE'
+    SCHEMA = 'SCHEMA'
 
 class qtrans(StrEnum):
     WHERE = 'WHERE'
@@ -29,6 +34,14 @@ class qtrans(StrEnum):
     AS = 'AS'
     JOIN = 'JOIN'
     ON = 'ON'
+    INTO = 'INTO'
+    VALUES = 'VALUES'
+
+class qtypes(StrEnum):
+    INT = 'INT'
+    TEXT = 'TEXT'
+    DATE = 'DATE'
+    DATETIME = 'DATETIME'
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'
@@ -67,10 +80,12 @@ PRECEDENCE = {
 }
 
 token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
-keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
+keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans] + [e.value for e in qddl] + [e.value for e in qtypes])
 whitespaces_set = set([e.value for e in qwhitespaces])
 
 comparators_arithmatic_symbols = set([e.value for e in qcomparators] + [e.value for e in qarithmaticoperators])
+
+type_set = set([e.value for e in qtypes])
 
 def tokenize(query: str) -> list[str]:
     """The goal is to split the function by whitespace, comma, dot and semicolon."""
@@ -160,10 +175,73 @@ class Parser:
 
         if current_token == qtype.SELECT:
             return self._parse_select_statement()
+        if current_token == qtype.CREATE:
+            return self._parse_create_statement()
+        if current_token == qtype.INSERT:
+            return self._parse_insert_statement()
         # Add elif for CREATE, INSERT, DELETE here later
         
         raise SyntaxError(f"Unsupported query type: {current_token}")
 
+    def _parse_insert_statement(self):
+        self.stream.match(qtype.INSERT)
+        self.stream.match(qtrans.INTO)
+        table_name = self.stream.current()
+        print(table_name)
+        self.stream.advance()
+
+        self.stream.match('(')
+
+        names = []
+        literals = []
+        while True:
+            names.append(self.stream.current())
+            self.stream.advance()
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        self.stream.match(')')
+        self.stream.match(qtrans.VALUES)
+        self.stream.match('(')
+        while True:
+            literals.append(self.stream.current())
+            self.stream.advance()
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        self.stream.match(')')
+        if len(names) != len(literals):
+            raise Exception("Number of columns and number of values not equal.")
+        return InsertStatement(table_name, names, literals)
+
+    def _parse_create_statement(self):
+        self.stream.match(qtype.CREATE)
+        self.stream.match(qddl.TABLE)
+
+        table_name = self.stream.current()
+        self.stream.advance()
+
+        self.stream.match('(')
+
+        names = []
+        types = []
+        while True:
+            column_name = self.stream.current()
+            if column_name in keywords_set:
+                raise Exception(f"Table name cannot be a keyword.")
+            self.stream.advance()
+            column_type = self.stream.current()
+            if column_type not in type_set:
+                raise Exception(f"Unknown type {column_type}. Expected type, got {column_type}")
+            self.stream.advance()
+            names.append(column_name)
+            types.append(column_type)
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        self.stream.match(')')
+        return CreateStatement(table_name, names, types)
+            
 
     def _parse_select_statement(self):
         """

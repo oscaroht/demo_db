@@ -49,6 +49,6 @@ print(catalog)
 engine = DatabaseEngine(catalog, buffermanager)
 print(engine.catalog.tables)
 repl(engine)
-diskmanager.write_page(0, catalog.to_page())
+diskmanager.write_page(catalog.to_page())
 buffermanager.flush()
 
