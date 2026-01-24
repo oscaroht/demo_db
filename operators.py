@@ -30,13 +30,15 @@ class Operator(abc.ABC):
         raise NotImplementedError
 
 class ScanOperator(Operator):
-    def __init__(self, table_name: str, data_generator, schema: Schema):
+    def __init__(self, table_name: str, page_generator, schema: Schema):
         self.table_name = table_name
-        self.data_generator = data_generator
         self.schema = schema
-
+        self.gen = page_generator
+        
     def next(self):
-        yield from self.data_generator()
+        for page in self.gen:
+            for row in page.data:
+                yield row
 
     def get_output_schema(self) -> Schema:
         return self.schema

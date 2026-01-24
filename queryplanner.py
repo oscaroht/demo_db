@@ -1,5 +1,7 @@
+from dataclasses import dataclass
 from typing import List, Callable
 import operator
+import buffermanager
 from syntax_tree import (
     ASTNode, BinaryOp, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
@@ -94,9 +96,11 @@ class QueryPlanner:
             cols: List[str] = self.catalog.get_all_column_names(table_name)
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])
+            pages = self.catalog.tables[table_name].page_id
+            gen = self.buffer_manager.get_pages(pages)
             return ScanOperator(
                 table_name=table_name,
-                data_generator=self.buffer_manager.get_data_generator(table_name),
+                page_generator=gen,
                 schema=schema
             )
 

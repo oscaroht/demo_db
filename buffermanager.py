@@ -2,7 +2,7 @@ from collections import OrderedDict
 from typing import List, Generator
 
 from diskmanager import DiskManager
-from metaclasses import Page, PageInfo
+from catalog import Page
 
 class BufferManager:
 
@@ -12,28 +12,33 @@ class BufferManager:
         self.capacity = capacity
         self.diskmanager = diskmanager
     
-    def get_pages(self, page_info_list: List[PageInfo]):
+    def get_pages(self, page_ids: List[int]):
         """If multiple pages are needed then first yield the pages that are in the buffer. Only afterwards read from disk.
         Otherwise pages might be evicted from the cache that are needed for the same query."""
         needed_from_disk = []
-        for page_info in page_info_list:
-            if page_info.page_id in self.buffer:
-                yield self.get(page_info)
+        for page_id in page_ids:
+            if page_id in self.buffer:
+                yield self.get(page_id)
             else:
-                needed_from_disk.append(page_info)
+                needed_from_disk.append(page_id)
         for disk_page_info in needed_from_disk:
             yield self.get(disk_page_info)
 
-    def get(self, page_info: PageInfo) -> int:
-        if page_info.page_id not in self.buffer:
-            page = self.diskmanager.read_page(page_info)
-            self.put(page_info.page_id, page)
+    def get(self, page_id: int) -> Page:
+        """Retrieve a page from cache or disk"""
+        if page_id not in self.buffer:
+            page_content = self.diskmanager.read_page(page_id)
+            page = Page.from_bytes(page_id, page_content)
+            self.put(page_id, page)
             return page
-        self.buffer.move_to_end(page_info.page_id)
-        return self.buffer[page_info.page_id]
+        self.buffer.move_to_end(page_id)
+        return self.buffer[page_id]
 
-    def put(self, key: int, value: int) -> None:
+    def put(self, key: int, value: Page) -> None:
         self.buffer[key] = value
         self.buffer.move_to_end(key)
         if len(self.buffer) > self.capacity:
             self.buffer.popitem(last = False)
+
+    def flush(self):
+        print("INPLEMENT: Flushing all pages")
