@@ -3,6 +3,7 @@ from queryplanner import QueryPlanner
 from engine import DatabaseEngine
 from result import QueryResult
 from request import QueryRequest
+from catalog import Page, Table, Catalog
 import schema
 
 @pytest.fixture
@@ -30,6 +31,11 @@ def mock_table_data() -> dict:
             }
 
 
+table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1] )
+table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
+
+catalog = Catalog([table1, table2])
+
 class MockBufferManager:
     def __init__(self, table_data_map: dict):
         """Initializes the mock with in-memory data for all tables."""
@@ -45,22 +51,27 @@ class MockBufferManager:
             yield from self.table_data_map[table_name_upper]
         return data_generator
 
+    def get_pages(self, page_id: int):
+        if page_id == [1]:
+            yield from self.table_data_map['employee']
+        if page_id == [2]:
+            yield from self.table_data_map['contract']
 
 class MockCatalog:
     """Mocks the Catalog to provide column indices for the 'employee' table."""
-    schema = {
+    tables = {
         'employee': ['id', 'name', 'age', 'city', 'salary'],
         'contract': ['id', 'employee_id', 'start_date', 'end_date']
     }
     
     def get_all_column_names(self, table_name):
         """Returns the list of column names in schema order for SELECT *."""
-        return self.schema[table_name]
+        return self.tables[table_name]
 
 @pytest.fixture
 def mock_catalog():
     """Provides a mocked version of the Catalog."""
-    return MockCatalog()
+    return catalog
 
 @pytest.fixture
 def mock_buffer_manager(mock_table_data):

@@ -41,4 +41,5 @@ class BufferManager:
             self.buffer.popitem(last = False)
 
     def flush(self):
-        print("INPLEMENT: Flushing all pages")
+        for page_id, page in self.buffer.items():
+            self.diskmanager.write_page(page_id, page.to_bytes())

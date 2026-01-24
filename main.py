@@ -1,5 +1,5 @@
 import buffermanager
-from catalog import Catalog, Table
+from catalog import Catalog, Table, Page
 import catalog
 import diskmanager
 from engine import DatabaseEngine
@@ -26,8 +26,8 @@ mock_schema = {
     'employee': ['id', 'name', 'age', 'city', 'salary'],
     'contract': ['id', 'employee_id', 'start_date', 'end_date'],
 }
-table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float] )
-table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str])
+table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1] )
+table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
 
 BOOTSTRAP = False
 
@@ -38,6 +38,13 @@ catalog_page = buffermanager.get(0)
 catalog = Catalog.from_page(catalog_page)
 if BOOTSTRAP:
     catalog = Catalog([table1, table2])
+    rows = table_data['employee']
+    buffermanager.put(1, Page(1, rows))
+    rows = table_data['contract']
+    buffermanager.put(2, Page(2, rows))
+
+print(buffermanager.buffer)
+print(catalog)
 
 engine = DatabaseEngine(catalog, buffermanager)
 print(engine.catalog.tables)

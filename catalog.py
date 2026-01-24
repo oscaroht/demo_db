@@ -66,7 +66,10 @@ class Catalog:
         self.tables = {table.table_name: table for table in tables}
 
     def get_all_column_names(self, table_name) -> list[str]:
-        return self.tables[table_name.lower()].column_names
+        table = self.tables.get(table_name.lower())
+        if table is None:
+            raise Exception("Table not found")
+        return table.column_names
 
     def get_all_page_ids(self, table_name) -> list[int]:
         return self.tables[table_name.lower()].page_id
