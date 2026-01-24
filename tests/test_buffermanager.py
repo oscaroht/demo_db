@@ -8,7 +8,7 @@ class MockDiskManager:
         return f"Page {page_info.page_id} data"
 
 # Create mock PageInfo objects
-class MockPageInfo:
+class MockPage:
     def __init__(self, page_id):
         self.page_id = page_id
 
@@ -31,8 +31,8 @@ def test_buffer_manager_get_and_put():
     disk_manager = MockDiskManager()
     buffer_manager = BufferManager(diskmanager=disk_manager, capacity=5)
 
-    page_info1 = MockPageInfo(page_id=1)
-    page_info2 = MockPageInfo(page_id=2)
+    page_info1 = MockPage(page_id=1)
+    page_info2 = MockPage(page_id=2)
 
     # Put a page into the buffer
     buffer_manager.put(page_info1.page_id, buffer_manager.diskmanager.read_page(page_info1))
@@ -59,9 +59,9 @@ def test_buffer_manager_eviction():
     disk_manager = MockDiskManager()
     buffer_manager = BufferManager(diskmanager=disk_manager, capacity=2)
 
-    page_info1 = MockPageInfo(page_id=1)
-    page_info2 = MockPageInfo(page_id=2)
-    page_info3 = MockPageInfo(page_id=3)
+    page_info1 = MockPage(page_id=1)
+    page_info2 = MockPage(page_id=2)
+    page_info3 = MockPage(page_id=3)
 
     # Put two pages into the buffer
     buffer_manager.put(page_info1.page_id, buffer_manager.diskmanager.read_page(page_info1))
@@ -84,8 +84,8 @@ def test_buffer_manager_get_lru():
     disk_manager = MockDiskManager()
     buffer_manager = BufferManager(diskmanager=disk_manager, capacity=2)
 
-    page_info1 = MockPageInfo(page_id=1)
-    page_info2 = MockPageInfo(page_id=2)
+    page_info1 = MockPage(page_id=1)
+    page_info2 = MockPage(page_id=2)
 
     # Put two pages into the buffer
     buffer_manager.put(page_info1.page_id, buffer_manager.diskmanager.read_page(page_info1))
@@ -95,7 +95,7 @@ def test_buffer_manager_get_lru():
     retrieved_page = buffer_manager.get(page_info1)
 
     # Add a third page, which should evict the second one (LRU)
-    page_info3 = MockPageInfo(page_id=3)
+    page_info3 = MockPage(page_id=3)
     buffer_manager.put(page_info3.page_id, buffer_manager.diskmanager.read_page(page_info3))
 
     # Check if the second page was evicted
@@ -109,10 +109,10 @@ def test_buffer_manager_get_more_pages_than_buffer_size():
     disk_manager = MockDiskManager()
     buffer_manager = BufferManager(diskmanager=disk_manager, capacity=2)
 
-    page_info1 = MockPageInfo(page_id=1)
-    page_info2 = MockPageInfo(page_id=2)
-    page_info3 = MockPageInfo(page_id=3)
-    page_info4 = MockPageInfo(page_id=4)
+    page_info1 = MockPage(page_id=1)
+    page_info2 = MockPage(page_id=2)
+    page_info3 = MockPage(page_id=3)
+    page_info4 = MockPage(page_id=4)
 
     # Get pages from the buffer (should be empty initially)
     pages = list(buffer_manager.get_pages([page_info1, page_info2, page_info3, page_info4]))

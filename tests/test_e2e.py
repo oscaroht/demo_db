@@ -1,10 +1,8 @@
 import pytest
-from queryplanner import QueryPlanner 
 from engine import DatabaseEngine
 from result import QueryResult
 from request import QueryRequest
 from catalog import Page, Table, Catalog
-import schema
 
 @pytest.fixture
 def mock_table_data() -> dict:
@@ -31,11 +29,6 @@ def mock_table_data() -> dict:
             }
 
 
-table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1] )
-table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
-
-catalog = Catalog([table1, table2])
-
 class MockBufferManager:
     def __init__(self, table_data_map: dict):
         """Initializes the mock with in-memory data for all tables."""
@@ -51,37 +44,30 @@ class MockBufferManager:
             yield from self.table_data_map[table_name_upper]
         return data_generator
 
-    def get_pages(self, page_id: int):
-        if page_id == [1]:
-            yield from self.table_data_map['employee']
-        if page_id == [2]:
-            yield from self.table_data_map['contract']
-
-class MockCatalog:
-    """Mocks the Catalog to provide column indices for the 'employee' table."""
-    tables = {
-        'employee': ['id', 'name', 'age', 'city', 'salary'],
-        'contract': ['id', 'employee_id', 'start_date', 'end_date']
-    }
-    
-    def get_all_column_names(self, table_name):
-        """Returns the list of column names in schema order for SELECT *."""
-        return self.tables[table_name]
+    def get_pages(self, page_ids: list[int]):
+        """
+        Yields actual Page objects containing the mock data.
+        """
+        for pid in page_ids:
+            # Map page_id to the correct table data
+            if pid == 1:
+                data = self.table_data_map['employee']
+                yield Page(page_id=1, data=data, is_dirty=False)
+            elif pid == 2:
+                data = self.table_data_map['contract']
+                yield Page(page_id=2, data=data, is_dirty=False)
 
 @pytest.fixture
-def mock_catalog():
-    """Provides a mocked version of the Catalog."""
-    return catalog
+def real_catalog():
+    """Build a real Catalog with mock Table definitions."""
+    table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1])
+    table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
+    return Catalog([table1, table2])
 
 @pytest.fixture
 def mock_buffer_manager(mock_table_data):
     """Creates the MockBufferManager object from the raw data map."""
     return MockBufferManager(mock_table_data)
-
-@pytest.fixture
-def planner(mock_catalog, mock_buffer_manager):
-    """Planner is initialized with the Catalog and the Mock Buffer Manager."""
-    return QueryPlanner(mock_catalog, mock_buffer_manager)
 
 def execute_query_and_get_results(engine, query_string):
     request = QueryRequest(query_string)
@@ -89,11 +75,10 @@ def execute_query_and_get_results(engine, query_string):
     return result.rows
 
 @pytest.fixture
-def engine(mock_table_data):
-    catalog = MockCatalog()
+def engine(mock_table_data, real_catalog):
+    """Initialize engine with a real Catalog and Mock Buffer Manager."""
     buffer_mgr = MockBufferManager(mock_table_data)
-    return DatabaseEngine(catalog, buffer_mgr)
-
+    return DatabaseEngine(real_catalog, buffer_mgr)
 
 def test_select_mixed_order(engine):
     """Test different column order"""
