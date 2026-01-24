@@ -12,7 +12,6 @@ class DiskManager:
                 page = catalog.to_page()
                 f.write(page.to_bytes())
 
-
     def read_page(self, page_id: int) -> bytes:
         offset = page_id * PAGE_SIZE
         with open(self.db_path, 'rb') as f:

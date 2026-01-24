@@ -38,8 +38,12 @@ class BufferManager:
         self.buffer[key] = value
         self.buffer.move_to_end(key)
         if len(self.buffer) > self.capacity:
-            self.buffer.popitem(last = False)
+            page_id, page = self.buffer.popitem(last = False)
+            if page.is_dirty:
+                page_bytes = page.to_bytes()
+                self.diskmanager.write_page(page_id, page_bytes)
 
     def flush(self):
         for page_id, page in self.buffer.items():
-            self.diskmanager.write_page(page_id, page.to_bytes())
+            if page.is_dirty:
+                self.diskmanager.write_page(page_id, page.to_bytes())

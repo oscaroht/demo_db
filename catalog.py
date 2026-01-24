@@ -22,10 +22,11 @@ class PageHeader(ctypes.BigEndianStructure):
 HEADER_SIZE = ctypes.sizeof(PageHeader)
 
 class Page:
-    def __init__(self, page_id, data: Any, header=None):  # data is list[Row] or Catalog
+    def __init__(self, page_id, data: Any, header=None, is_dirty=True):  # data is list[Row] or Catalog
         self.page_id = page_id
         self.data = data
         self.header: None | PageHeader = header
+        self.is_dirty = is_dirty
 
     @classmethod
     def from_bytes(cls, page_id: int, raw_data: bytes):
@@ -36,7 +37,7 @@ class Page:
             
         pickled_data = raw_data[HEADER_SIZE : HEADER_SIZE + header.data_length]
         rows = pickle.loads(pickled_data)
-        return cls(page_id, rows, header=header)
+        return cls(page_id, rows, header=header, is_dirty=False)
 
     def to_bytes(self) -> bytes:
         pickled_rows = pickle.dumps(self.data)
