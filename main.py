@@ -34,7 +34,7 @@ BOOTSTRAP = False
 diskmanager = DiskManager('.db')
 buffermanager = BufferManager(diskmanager, 10)
 
-catalog_page = buffermanager.get(0)
+catalog_page = buffermanager.get_page(0)
 catalog = Catalog.from_page(catalog_page)
 if BOOTSTRAP:
     catalog = Catalog([table1, table2])

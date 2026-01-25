@@ -1,9 +1,11 @@
+import abc
 from collections import namedtuple
 from dataclasses import dataclass, field
 import pickle
 from typing import Iterable, List, Type, Any
 
 from config import PAGE_SIZE
+import transaction
 
 class Row(tuple):
     pass
@@ -80,39 +82,54 @@ class Table:
     column_names: List[str]
     column_datatypes: List[Type]
     page_id: List[int] = field(default_factory=list)
-    last_page_id: None | int = None
 
 
 class Catalog:
     """Mock database schema information."""
     def __init__(self, tables: Iterable[Table]):
         self.tables = {table.table_name: table for table in tables}
-        self.free_page_ids = []
+        sorted_page_ids = sorted([id for table in tables for id in table.page_id])
+        self.free_page_ids = []  # should derive from sorted_page_ids. Too late now to fix
         self.max_page_id = max([id for table in tables for id in table.page_id])
+        self.borrowed_page_ids = {}  # tranaction_id: page_id
 
-    def get_all_column_names(self, table_name) -> list[str]:
-        table = self.tables.get(table_name.lower())
+    def get_table_by_name(self, name: str):
+        table = self.tables.get(name.lower())
         if table is None:
             raise Exception("Table not found")
-        return table.column_names
+        return table
+
+    def drop_table_by_name(self, name: str):
+        table = self.get_table_by_name(name)
+        self.free_page_ids += table.page_id  # take the table's pages and add them to the free list for reassignment later
+        del self.tables[table.table_name]  # remove from dict
 
     def get_all_page_ids(self, table_name) -> list[int]:
         return self.tables[table_name.lower()].page_id
 
-    def get_free_page_id(self, table_name) -> int:
+    def get_free_page_id(self, tranaction_id: int) -> int:
         if self.free_page_ids:
             page_id = self.free_page_ids.pop(0)
         else:
-            page_id = self.max_page_id
-            self.max_page_id += 1
-        self.tables[table_name.lower()].page_id.append(page_id)
+            page_id = self.max_page_id + 1
+            self.max_page_id = page_id
+        if tranaction_id not in self.borrowed_page_ids:
+            self.borrowed_page_ids[transaction] = []
+        self.borrowed_page_ids[tranaction_id].append(page_id)
         return page_id
+
+    def return_page_ids(self, page_ids: list[int]):
+        self.free_page_ids += page_ids
 
     def add_new_table(self, table: Table):
         name = table.table_name.lower()
         if name in self.tables:
-            raise Exception("Table already exists")
+            raise Exception(f"Table with name '{table.table_name}' already exists")
         self.tables[name] = table
+
+    def create_or_replace_table(self, table: Table):
+        self.tables[table.table_name] = table
+
 
     def to_page(self) -> Page:
         page = Page(0, self)

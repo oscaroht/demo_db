@@ -6,6 +6,7 @@ from catalog import Table, Catalog, Page
 
 import catalog
 from schema import ColumnIdentifier, Schema
+from transaction import Transaction
 Row = tuple[Any, ...]
 
 @dataclass
@@ -43,8 +44,8 @@ class StatusOperator(Operator):
 
 
 class ScanOperator(Operator):
-    def __init__(self, table_name: str, page_generator, schema: Schema):
-        self.table_name = table_name
+    def __init__(self, table_display_name: str, page_generator, schema: Schema):
+        self.table_name = table_display_name
         self.schema = schema
         self.gen = page_generator
         
@@ -61,40 +62,39 @@ class ScanOperator(Operator):
         return f"{indent}* TableScan (Source: {self.table_name})"
 
 class Insert(Operator):
-    def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], buffer_manager, catalog: Catalog):
+    def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], transaction):
         self.table = table
         self.data_generator = data_generator
         self.column_indices = column_indices
-        self.buffer_manager = buffer_manager
-        self.catalog = catalog
+        self.transaction: Transaction = transaction
 
     def next(self):
-        print(self.column_indices)
         for raw_val_tuple in self.data_generator:
-            print(raw_val_tuple)
-            new_row = []
-            for src_idx in self.column_indices:
-                if src_idx is not None:
-                    typ = self.table.column_datatypes[len(new_row)]
-                    print(f"Cast val {raw_val_tuple[src_idx]} to type {str(typ)}")
-                    new_row.append(typ(raw_val_tuple[src_idx]))
-                else:
-                    new_row.append(None) # Default/Null
-
-            page_id = self.table.last_page_id 
-
-            if page_id is None:
-                page_id = self.catalog.get_free_page_id(self.table.table_name)
-                page = Page(page_id, [])
-                print("new page id")
-                print(page.page_id)
-                self.buffer_manager.put(page)
-
-            page = self.buffer_manager.get(page_id)
-            print('pageid ')
-            print(page.page_id)
-            page.add_row(tuple(new_row))
+            new_row = self._prepare_row(raw_val_tuple)
+            page_ids = self.table.page_id
+            if page_ids is None:
+                page = self.transaction.get_new_page(self.table)
+            page = self.transaction.get_existing_page_for_write(self.table, page_ids[-1])
+            page_is_full = not page.add_row(new_row)
+            if page_is_full:
+                page = self.transaction.get_new_page(self.table)
+                page_is_full = not page.add_row(new_row)
+                if page_is_full:
+                    raise Exception("Page size is to small for even 1 row!")
         yield(tuple(['SUCCESS']))
+
+
+    def _prepare_row(self, raw_val_tuple):
+        new_row = []
+        for src_idx in self.column_indices:
+            if src_idx is not None:
+                typ = self.table.column_datatypes[len(new_row)]
+                print(f"Cast val {raw_val_tuple[src_idx]} to type {str(typ)}")
+                new_row.append(typ(raw_val_tuple[src_idx]))
+            else:
+                new_row.append(None) # Default/Null
+        return tuple(new_row)
+
         
     def display_plan(self, level=0) -> str:
         indent = '  ' * level

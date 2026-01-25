@@ -162,3 +162,7 @@ class InsertStatement(ASTNode):
         self.table_name = table_name
         self.column_names = column_names
         self.values = values
+
+class DropStatement(ASTNode):
+    def __init__(self, table_name: str) -> None:
+        self.table_name = table_name

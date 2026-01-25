@@ -6,7 +6,6 @@ from catalog import Page
 
 class BufferManager:
 
-    # initialising capacity
     def __init__(self,  diskmanager: DiskManager, capacity: int = 10):
         self.buffer = OrderedDict()
         self.capacity = capacity
@@ -18,13 +17,13 @@ class BufferManager:
         needed_from_disk = []
         for page_id in page_ids:
             if page_id in self.buffer:
-                yield self.get(page_id)
+                yield self.get_page(page_id)
             else:
                 needed_from_disk.append(page_id)
         for disk_page_info in needed_from_disk:
-            yield self.get(disk_page_info)
+            yield self.get_page(disk_page_info)
 
-    def get(self, page_id: int) -> Page:
+    def get_page(self, page_id: int) -> Page:
         """Retrieve a page from cache or disk"""
         if page_id not in self.buffer:
             page = self.diskmanager.read_page(page_id)

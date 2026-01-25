@@ -4,15 +4,17 @@ from typing import List, Callable
 import operator
 from buffermanager import BufferManager
 from syntax_tree import (
-    ASTNode, BinaryOp, InsertStatement, SelectStatement,
+    ASTNode, BinaryOp, DropStatement, InsertStatement, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
     CreateStatement) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
     Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert
 )
-from catalog import Catalog, Table
+from catalog import Catalog, Table, Page
 from schema import ColumnIdentifier, Schema
 from datetime import date, datetime
+
+from transaction import Transaction
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
@@ -33,9 +35,9 @@ class Status(StrEnum):
     SUCCESS = auto()
 
 class QueryPlanner:
-    def __init__(self, catalog: Catalog, buffer_manager: BufferManager):
-        self.catalog = catalog
-        self.buffer_manager = buffer_manager
+    def __init__(self, transaction: Transaction):
+        # self.catalog = catalog
+        self.transaction = transaction
 
     def plan_query(self, ast_root: ASTNode) -> Operator:
         if isinstance(ast_root, SelectStatement):
@@ -44,18 +46,22 @@ class QueryPlanner:
             return self._plan_create(ast_root)
         if isinstance(ast_root, InsertStatement):
             return self._plan_insert(ast_root)
+        if isinstance(ast_root, DropStatement):
+            return self._plan_drop(ast_root)
+
+    def _plan_drop(self, node: DropStatement):
+        self.transaction.drop_table_by_name(node.table_name)
+        return StatusOperator("Success")
     
     def _plan_create(self, node: CreateStatement):
         print("CREATE PLANING")
         native_types = [  TYPE_MAP[typ] for typ in node.column_types  ]
         table = Table(node.table_name, node.column_names, native_types)
-        self.catalog.add_new_table(table)
+        self.transaction.add_new_table(table)
         return StatusOperator('SUCCESS')
 
     def _plan_insert(self, node: InsertStatement):
-        table = self.catalog.tables.get(node.table_name)
-        if table is None:
-            raise Exception(f"Table {node.table_name} does not exist.")
+        table = self.transaction.get_table_by_name(node.table_name)
         for col in node.column_names:
             if col not in table.column_names:
                 raise Exception(f"Column {col} not in table {node.table_name}.")
@@ -71,11 +77,9 @@ class QueryPlanner:
             else:
                 column_indices.append(None)
                 column_types.append(None)
-        print(column_indices)
-        print(column_types)
         gen = (row for row in node.values)
 
-        return Insert(table, gen, column_indices, self.buffer_manager, self.catalog)
+        return Insert(table, gen, column_indices, self.transaction)
 
     def _plan_select(self, stmt: SelectStatement):
         # 1. FROM & JOIN
@@ -141,13 +145,14 @@ class QueryPlanner:
         if isinstance(node, TableRef):
             table_name = node.name
             alias = node.alias or node.name
-            cols: List[str] = self.catalog.get_all_column_names(table_name)
+            table: Table = self.transaction.get_table_by_name(table_name)
+            cols: list[str] = table.column_names
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])
-            pages = self.catalog.tables[table_name].page_id
-            gen = self.buffer_manager.get_pages(pages)
+            # pages = self.transaction.get_pages(pages)
+            gen = self.transaction.get_page_generator_from_table_by_name(table_name)
             return ScanOperator(
-                table_name=table_name,
+                table_display_name=table_name,
                 page_generator=gen,
                 schema=schema
             )

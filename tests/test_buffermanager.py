@@ -42,7 +42,7 @@ def test_buffer_manager_get_and_put():
     assert buffer_manager.buffer[page_info1.page_id] == "Page 1 data"
 
     # Get the same page from the buffer
-    retrieved_page = buffer_manager.get(page_info1)
+    retrieved_page = buffer_manager.get_page(page_info1)
     
     # Check if the retrieved page is correct
     assert retrieved_page == "Page 1 data"
@@ -92,7 +92,7 @@ def test_buffer_manager_get_lru():
     buffer_manager.put(page_info2.page_id, buffer_manager.diskmanager.read_page(page_info2))
 
     # Access the first page to make it the most recently used
-    retrieved_page = buffer_manager.get(page_info1)
+    retrieved_page = buffer_manager.get_page(page_info1)
 
     # Add a third page, which should evict the second one (LRU)
     page_info3 = MockPage(page_id=3)

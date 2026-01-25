@@ -112,6 +112,7 @@ clear - clear the terminal text
                       """
     print(logo)
     print(welcome_msg)
+    transaction_id = -1  # start a new transaction
     while True:
         try:
             get_input = input
@@ -127,7 +128,7 @@ clear - clear the terminal text
                 clear_screen()
                 continue
 
-            request = QueryRequest(sql=sql)
+            request = QueryRequest(sql=sql, transaction_id=transaction_id)
             result = engine.execute(request)
             render_result(result)
 

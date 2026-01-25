@@ -1,6 +1,6 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement
+from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement
 import re
 
 class qtype(StrEnum):
@@ -8,6 +8,7 @@ class qtype(StrEnum):
     CREATE = 'CREATE'
     DELETE = 'DELETE'
     INSERT = 'INSERT'
+    DROP = 'DROP'
 
 class qddl(StrEnum):
     TABLE = 'TABLE'
@@ -179,15 +180,24 @@ class Parser:
             return self._parse_create_statement()
         if current_token == qtype.INSERT:
             return self._parse_insert_statement()
+        if current_token == qtype.DROP:
+            return self._parse_drop_statement()
         # Add elif for CREATE, INSERT, DELETE here later
         
         raise SyntaxError(f"Unsupported query type: {current_token}")
+
+    def _parse_drop_statement(self):
+        self.stream.match(qtype.DROP)
+        self.stream.match(qddl.TABLE)
+        table_name = self.stream.current()
+        if table_name is None:
+            raise Exception('Expected table name. Found nothing.')
+        return DropStatement(table_name)
 
     def _parse_insert_statement(self):
         self.stream.match(qtype.INSERT)
         self.stream.match(qtrans.INTO)
         table_name = self.stream.current()
-        print(table_name)
         self.stream.advance()
 
         names = self._parse_comma_separated()

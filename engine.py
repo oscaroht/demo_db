@@ -1,24 +1,40 @@
-import buffermanager
-import catalog
 from operators import Operator
 import traceback
 from typing import List
 
-from catalog import Catalog, Page
 from request import QueryRequest
 from result import QueryResult
-from queryplanner import QueryPlanner, Status
+from queryplanner import QueryPlanner
 from schema import Schema
 from sql_interpreter import tokenize, TokenStream, Parser
-from syntax_tree import CreateStatement
+from transaction import Transaction
 
 class DatabaseEngine:
     def __init__(self, catalog, buffermanager):
         self.catalog = catalog
         self.buffer_manager = buffermanager
+        self.transactions = {}  # id: transaction
+
+    def get_transaction_by_id(self, id: int):
+        t = self.transactions.get(id)
+        if t is None:
+            raise Exception(f"No transaction with id {id}")
+        return t
+
+    def get_new_transaction(self):
+        new_id = max(self.transactions.keys()) + 1 if self.transactions.keys() else 1
+        transaction = Transaction(new_id, self.buffer_manager, self.catalog)
+        self.transactions[new_id] = transaction
+        return transaction
 
     def execute(self, request: QueryRequest) -> QueryResult:
         sql = request.sql
+        if request.transaction_id == -1:
+            # new transaction
+            transaction = self.get_new_transaction()
+        else:
+            transaction = self.get_transaction_by_id(request.transaction_id)
+            
         tokens = []
         ast_root = None
         query_plan_root = None
@@ -29,7 +45,7 @@ class DatabaseEngine:
             stream = TokenStream(tokens)
             parser = Parser(stream) 
             ast_root = parser.parse()
-            planner = QueryPlanner(self.catalog, self.buffer_manager)
+            planner = QueryPlanner(transaction)
             query_plan_root: Operator = planner.plan_query(ast_root)
 
             rows = list(query_plan_root.next())
