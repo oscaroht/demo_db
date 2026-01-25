@@ -455,54 +455,6 @@ class Parser:
 
         return ColumnRef(*self._parse_column_identifier())
         
-    def _parse_expression_old(self) -> Expression:
-        """
-        Parses a single column or aggregate function call.
-        (e.g., id, name, COUNT(*), MAX(price), name as first_name)
-        """
-        
-        current = self.stream.current()
-        if current is None:
-            raise SyntaxError(f"Expected expression (column ref, function call, literal) found end of tokens.")
-
-        if current == '*':
-            self.stream.advance()
-            return Star()
-        
-        # Check for aggregate functions
-        if current in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
-            function_name = self.stream.match(current)
-            self.stream.match('(')
-            is_distinct = False 
-            # Check for COUNT(DISTINCT ..)
-            if current == qtrans.COUNT and self.stream.current() == qtrans.DISTINCT:
-                is_distinct = True
-                self.stream.advance()
-            # Check for COUNT(*)
-            if self.stream.current() == '*':
-                argument = self.stream.match('*')
-                aggcol = Star()
-            else:
-                argument = self._parse_column_identifier() # Column inside the aggregate
-                aggcol = ColumnRef(*argument)
-            
-            self.stream.match(')')
-            aggcall = AggregateCall(function_name, aggcol, is_distinct=is_distinct)
-            aggcall.alias = self._parse_alias()
-            return aggcall
-        
-        if current.startswith("'") and current.endswith("'") or current.isdigit():
-            col = self._parse_literal()
-            col.alias = self._parse_alias()
-            return col
-        if current == '(' or self.stream.peek() in comparators_arithmatic_symbols:
-            col = self._parse_comparison()
-            col.alias = self._parse_alias()
-        table, col_name = self._parse_column_identifier()
-        col = ColumnRef(table, col_name)
-        col.alias = self._parse_alias()
-        return col
-
     def _parse_alias(self) -> None | str:
         if self.stream.current() == 'AS':
             self.stream.match('AS')
