@@ -28,18 +28,18 @@ class BufferManager:
         """Retrieve a page from cache or disk"""
         if page_id not in self.buffer:
             page = self.diskmanager.read_page(page_id)
-            self.put(page_id, page)
+            self.put(page)
             return page
         self.buffer.move_to_end(page_id)
         return self.buffer[page_id]
 
-    def put(self, key: int, value: Page) -> None:
-        self.buffer[key] = value
-        self.buffer.move_to_end(key)
+    def put(self, page: Page) -> None:
+        self.buffer[page.page_id] = page
+        self.buffer.move_to_end(page.page_id)
         if len(self.buffer) > self.capacity:
-            _, page = self.buffer.popitem(last = False)
-            if page.is_dirty:
-                self.diskmanager.write_page(page)
+            _, evicted_page = self.buffer.popitem(last = False)
+            if evicted_page.is_dirty:
+                self.diskmanager.write_page(evicted_page)
 
     def flush(self):
         for _, page in self.buffer.items():

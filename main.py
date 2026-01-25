@@ -39,9 +39,9 @@ catalog = Catalog.from_page(catalog_page)
 if BOOTSTRAP:
     catalog = Catalog([table1, table2])
     rows = table_data['employee']
-    buffermanager.put(1, Page(1, rows, is_dirty=True))
+    buffermanager.put(Page(1, rows, is_dirty=True))
     rows = table_data['contract']
-    buffermanager.put(2, Page(2, rows, is_dirty=True))
+    buffermanager.put(Page(2, rows, is_dirty=True))
 
 print(buffermanager.buffer)
 print(catalog)

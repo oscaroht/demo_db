@@ -69,22 +69,30 @@ class Insert(Operator):
         self.catalog = catalog
 
     def next(self):
+        print(self.column_indices)
         for raw_val_tuple in self.data_generator:
+            print(raw_val_tuple)
             new_row = []
             for src_idx in self.column_indices:
                 if src_idx is not None:
                     typ = self.table.column_datatypes[len(new_row)]
+                    print(f"Cast val {raw_val_tuple[src_idx]} to type {str(typ)}")
                     new_row.append(typ(raw_val_tuple[src_idx]))
                 else:
                     new_row.append(None) # Default/Null
 
             page_id = self.table.last_page_id 
+
             if page_id is None:
-                new_page_id = self.catalog.get_free_page_id(self.table.table_name)
-                page = Page(new_page_id, [])
+                page_id = self.catalog.get_free_page_id(self.table.table_name)
+                page = Page(page_id, [])
+                print("new page id")
+                print(page.page_id)
                 self.buffer_manager.put(page)
 
             page = self.buffer_manager.get(page_id)
+            print('pageid ')
+            print(page.page_id)
             page.add_row(tuple(new_row))
         yield(tuple(['SUCCESS']))
         

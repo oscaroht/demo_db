@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum, auto
 from typing import List, Callable
 import operator
-import buffermanager
+from buffermanager import BufferManager
 from syntax_tree import (
     ASTNode, BinaryOp, InsertStatement, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
@@ -33,7 +33,7 @@ class Status(StrEnum):
     SUCCESS = auto()
 
 class QueryPlanner:
-    def __init__(self, catalog: Catalog, buffer_manager):
+    def __init__(self, catalog: Catalog, buffer_manager: BufferManager):
         self.catalog = catalog
         self.buffer_manager = buffer_manager
 
@@ -64,13 +64,15 @@ class QueryPlanner:
         
         column_indices = []
         column_types = []
-        for tab_col in table.column_names:
+        for tab_col, col_type in zip(table.column_names, table.column_datatypes):
             if tab_col in val_map:
                 column_indices.append(val_map[tab_col])
-                column_types.append(val_map)
+                column_types.append(col_type)
             else:
                 column_indices.append(None)
-
+                column_types.append(None)
+        print(column_indices)
+        print(column_types)
         gen = (row for row in node.values)
 
         return Insert(table, gen, column_indices, self.buffer_manager, self.catalog)
