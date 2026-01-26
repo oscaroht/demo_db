@@ -200,7 +200,7 @@ class Parser:
         table_name = self.stream.current()
         self.stream.advance()
 
-        names = self._parse_comma_separated()
+        names = self._parse_comma_separated_literals()
         if self.stream.current() == qtrans.VALUES:
             values = self._parse_values(len(names))
             return InsertStatement(table_name, names, values)
@@ -208,9 +208,9 @@ class Parser:
     def _parse_values(self, num_cols):
         """Prase the values of an insert statement"""
         self.stream.match(qtrans.VALUES)
-        values: list[list[str]] = [] 
+        values: list[list[Literal]] = [] 
         while True:
-            row = self._parse_comma_separated()
+            row = self._parse_comma_separated_literals()
             if len(row) != num_cols:
                 raise Exception("Number of columns and number of values not equal.")
             values.append(row)
@@ -219,13 +219,19 @@ class Parser:
             self.stream.match(qseparators.COMMA)
         return values
 
-    def _parse_comma_separated(self) -> list[str]:
+    def _parse_comma_separated_literals(self) -> list[Literal]:
         """Parse columns or value row as (val1, val2, val3)"""
         items = []
         self.stream.match('(')
         while True:
-            items.append(self.stream.current())
-            self.stream.advance()
+            # current = self.stream.current()
+            # if current is None:
+            #     raise Exception(f"Expected literal, got end of query.")
+            # if not self._is_literal(current):
+            #     raise Exception(f"Value {current} in values is not a literal")
+            # literal = self._parse_literal()
+            item = self._parse_operand()
+            items.append(item)
             if self.stream.current() != qseparators.COMMA:
                 break
             self.stream.match(qseparators.COMMA)
@@ -459,12 +465,13 @@ class Parser:
             self.stream.match(')')
             return AggregateCall(function_name, aggcol, is_distinct=is_distinct)
 
-        # Handle Literals and Columns (Using your existing logic)
-        if token.startswith("'") or token.isdigit() or '.' in token or token.replace('.','',1).isdigit():
-            return self._parse_operand()
+        return self._parse_operand()  # handle lliteral and column ref
+    
 
-        return ColumnRef(*self._parse_column_identifier())
-        
+    def _is_literal(self, token: str) -> bool:
+        return token.startswith("'") or token.isdigit() or re.match(r'\d*[.]\d+', token)
+
+
     def _parse_alias(self) -> None | str:
         if self.stream.current() == 'AS':
             self.stream.match('AS')
@@ -500,11 +507,13 @@ class Parser:
         token: None | str = self.stream.current()
         if token is None:
             raise SyntaxError("Expected literal value not end of query")
-        value: str | int = token
-        if token.isdigit():
+        value: str | int | float = token
+        if token.startswith("'") and token.endswith("'"):
+            value = str(token.strip("'").replace(r"\'", "'"))
+        elif token.isdigit():
             value = int(token)
-        else:
-            value = token[1:-1]  # strip ' and '
+        elif re.match(r'\d*[.]\d+', token):
+            value = float(token)
         self.stream.advance()
         return Literal(value)
 
@@ -570,22 +579,9 @@ class Parser:
 
         if token is None:
             raise SyntaxError("Expected an operand, got end of stream.")
-
-        # 1. String Literal Check (The fix from last time, now robust!)
-        if token.startswith("'") and token.endswith("'"):
-            self.stream.advance()
-            # Pass the stripped value as a Literal
-            return Literal(token.strip("'").replace(r"\'", "'") )
-
-        if token.isdigit():
-            self.stream.advance()
-            return Literal(int(token))
-
-        if re.match(r'\d*[.]\d+', token):
-            # Simple conversion to Literal node
-            self.stream.advance()
-            # Try to cast to integer or float
-            return Literal(float(token))
         
+        # Check if it is a literal
+        if self._is_literal(token):
+            return self._parse_literal()
         # Otherwise, assume it's a Column Reference (identifier)
         return ColumnRef(*self._parse_column_identifier())

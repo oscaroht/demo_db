@@ -70,7 +70,7 @@ def mock_buffer_manager(mock_table_data):
     return MockBufferManager(mock_table_data)
 
 def execute_query_and_get_results(engine, query_string):
-    request = QueryRequest(query_string)
+    request = QueryRequest(query_string, -1)
     result: QueryResult = engine.execute(request)
     return result.rows
 

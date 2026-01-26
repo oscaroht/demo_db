@@ -61,11 +61,11 @@ class QueryPlanner:
 
     def _plan_insert(self, node: InsertStatement):
         table = self.transaction.get_table_by_name(node.table_name)
-        for col in node.column_names:
-            if col not in table.column_names:
-                raise Exception(f"Column {col} not in table {node.table_name}.")
+        for col in node.columns:
+            if col.name not in table.column_names:
+                raise Exception(f"Column {col.name} not in table {node.table_name}.")
 
-        val_map = {col: i for i, col in enumerate(node.column_names)}
+        val_map = {col.name: i for i, col in enumerate(node.columns)}
         
         column_indices = []
         column_types = []

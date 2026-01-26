@@ -158,10 +158,10 @@ class CreateStatement(ASTNode):
         self.column_types = column_types
 
 class InsertStatement(ASTNode):
-    def __init__(self, table_name, column_names, values) -> None:
+    def __init__(self, table_name, columns, values) -> None:
         self.table_name = table_name
-        self.column_names = column_names
-        self.values = values
+        self.columns: list[ColumnRef] = columns
+        self.values: list[Literal] = values
 
 class DropStatement(ASTNode):
     def __init__(self, table_name: str) -> None:

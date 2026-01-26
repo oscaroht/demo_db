@@ -83,13 +83,13 @@ class Insert(Operator):
         yield(tuple(['SUCCESS']))
 
 
-    def _prepare_row(self, raw_val_tuple):
+    def _prepare_row(self, raw_val_tuple) -> Row:
         new_row = []
         for src_idx in self.column_indices:
             if src_idx is not None:
                 typ = self.table.column_datatypes[len(new_row)]
-                print(f"Cast val {raw_val_tuple[src_idx]} to type {str(typ)}")
-                new_row.append(typ(raw_val_tuple[src_idx]))
+                print(f"Cast val {raw_val_tuple[src_idx].value} to type {str(typ)}")
+                new_row.append(typ(raw_val_tuple[src_idx].value))
             else:
                 new_row.append(None) # Default/Null
         return tuple(new_row)
