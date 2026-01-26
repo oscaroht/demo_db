@@ -200,18 +200,27 @@ class Parser:
         table_name = self.stream.current()
         self.stream.advance()
 
-        names = self._parse_comma_separated_literals()
-        if self.stream.current() == qtrans.VALUES:
+        names = []
+        if self.stream.current() == '(':
+            names = self._parse_comma_separated_operands()
+
+        current = self.stream.current()
+        if current == qtrans.VALUES:
             values = self._parse_values(len(names))
-            return InsertStatement(table_name, names, values)
+            return InsertStatement(table_name, names, values=values)
+        elif current == qtype.SELECT:
+            select = self._parse_select_statement()
+            return InsertStatement(table_name, names, select=select)
+        else:
+            raise Exception(f"Expected VALUES or SELECT, got {current}")
 
     def _parse_values(self, num_cols):
         """Prase the values of an insert statement"""
         self.stream.match(qtrans.VALUES)
         values: list[list[Literal]] = [] 
         while True:
-            row = self._parse_comma_separated_literals()
-            if len(row) != num_cols:
+            row = self._parse_comma_separated_operands()
+            if num_cols != 0 and len(row) != num_cols:
                 raise Exception("Number of columns and number of values not equal.")
             values.append(row)
             if self.stream.current() != qseparators.COMMA:
@@ -219,7 +228,7 @@ class Parser:
             self.stream.match(qseparators.COMMA)
         return values
 
-    def _parse_comma_separated_literals(self) -> list[Literal]:
+    def _parse_comma_separated_operands(self) -> list[Literal]:
         """Parse columns or value row as (val1, val2, val3)"""
         items = []
         self.stream.match('(')

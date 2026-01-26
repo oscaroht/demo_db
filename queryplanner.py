@@ -76,11 +76,21 @@ class QueryPlanner:
             else:
                 column_indices.append(None)
                 column_types.append(None)
-        gen = (row for row in node.values)
+
+        if node.columns == []:
+            # use all column
+            column_indices = range(0, len(table.column_names))
+            column_types = table.column_datatypes
+
+        if node.values:
+            gen = lambda : (row for row in node.values)
+        else:
+            gen = self._plan_select(node.select).next
 
         return Insert(table, gen, column_indices, self.transaction)
 
-    def _plan_select(self, stmt: SelectStatement):
+
+    def _plan_select(self, stmt: SelectStatement) -> Operator:
         # 1. FROM & JOIN
         plan = self._plan_from(stmt.from_clause)
 

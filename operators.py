@@ -1,8 +1,9 @@
 import abc
-from typing import Callable, Generator, List, Any, Optional
+from typing import Callable, Generator, List, Any, Literal, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
 from catalog import Table, Catalog, Page
+from syntax_tree import Literal
 
 from schema import ColumnIdentifier, Schema
 from transaction import Transaction
@@ -68,7 +69,7 @@ class Insert(Operator):
         self.transaction: Transaction = transaction
 
     def next(self):
-        for raw_val_tuple in self.data_generator:
+        for raw_val_tuple in self.data_generator():
             new_row = self._prepare_row(raw_val_tuple)
             page_ids = self.table.page_id
             if page_ids == []:
@@ -88,8 +89,11 @@ class Insert(Operator):
         for src_idx in self.column_indices:
             if src_idx is not None:
                 typ = self.table.column_datatypes[len(new_row)]
-                print(f"Cast val {raw_val_tuple[src_idx].value} to type {str(typ)}")
-                new_row.append(typ(raw_val_tuple[src_idx].value))
+                val = raw_val_tuple[src_idx]
+                if isinstance(val, Literal):
+                    val = val.value
+                print(f"Cast val {val} to type {str(typ)}")
+                new_row.append(typ(val))
             else:
                 new_row.append(None) # Default/Null
         return tuple(new_row)

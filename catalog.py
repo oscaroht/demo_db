@@ -140,6 +140,10 @@ class Catalog:
         self.tables[name] = table
 
     def create_or_replace_table(self, table: Table):
+        """Add table to the tables map.
+
+        The page_ids have already been claimed and the transaction
+        commit/rollback handles the returing page_ids"""
         self.tables[table.table_name] = table
 
 
