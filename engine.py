@@ -53,6 +53,8 @@ class DatabaseEngine:
             schema: Schema = query_plan_root.get_output_schema()
             column_names: List[str] = schema.get_names()
 
+            transaction.commit()
+
             return QueryResult(
                 columns=column_names,
                 rows=rows,
@@ -64,6 +66,7 @@ class DatabaseEngine:
             )
 
         except Exception:
+            transaction.rollback()
             return QueryResult(
                 columns=[],
                 rows=[],

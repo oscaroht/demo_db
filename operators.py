@@ -4,7 +4,6 @@ from functools import cmp_to_key
 from dataclasses import dataclass
 from catalog import Table, Catalog, Page
 
-import catalog
 from schema import ColumnIdentifier, Schema
 from transaction import Transaction
 Row = tuple[Any, ...]
@@ -72,7 +71,7 @@ class Insert(Operator):
         for raw_val_tuple in self.data_generator:
             new_row = self._prepare_row(raw_val_tuple)
             page_ids = self.table.page_id
-            if page_ids is None:
+            if page_ids == []:
                 page = self.transaction.get_new_page(self.table)
             page = self.transaction.get_existing_page_for_write(self.table, page_ids[-1])
             page_is_full = not page.add_row(new_row)

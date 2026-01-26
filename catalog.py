@@ -5,7 +5,6 @@ import pickle
 from typing import Iterable, List, Type, Any
 
 from config import PAGE_SIZE
-import transaction
 
 class Row(tuple):
     pass
@@ -89,9 +88,22 @@ class Catalog:
     def __init__(self, tables: Iterable[Table]):
         self.tables = {table.table_name: table for table in tables}
         sorted_page_ids = sorted([id for table in tables for id in table.page_id])
-        self.free_page_ids = []  # should derive from sorted_page_ids. Too late now to fix
-        self.max_page_id = max([id for table in tables for id in table.page_id])
+        print(f"Pages {sorted_page_ids}")
+        self.free_page_ids = self._find_free_pages(sorted_page_ids)
+
+        print(f"Pages {sorted_page_ids}")
+        self.max_page_id = sorted_page_ids[-1] if len(sorted_page_ids) else 0
         self.borrowed_page_ids = {}  # tranaction_id: page_id
+
+    def _find_free_pages(self, sorted_page_ids: list[int]):
+        free_page_ids = []
+        i = 1
+        while len(sorted_page_ids):
+            page_id = sorted_page_ids.pop(0)
+            while i < page_id:
+                free_page_ids.append(i)
+                i += 1
+        return free_page_ids
 
     def get_table_by_name(self, name: str):
         table = self.tables.get(name.lower())
@@ -107,15 +119,15 @@ class Catalog:
     def get_all_page_ids(self, table_name) -> list[int]:
         return self.tables[table_name.lower()].page_id
 
-    def get_free_page_id(self, tranaction_id: int) -> int:
+    def get_free_page_id(self, transaction_id: int) -> int:
         if self.free_page_ids:
             page_id = self.free_page_ids.pop(0)
         else:
             page_id = self.max_page_id + 1
             self.max_page_id = page_id
-        if tranaction_id not in self.borrowed_page_ids:
-            self.borrowed_page_ids[transaction] = []
-        self.borrowed_page_ids[tranaction_id].append(page_id)
+        if transaction_id not in self.borrowed_page_ids:
+            self.borrowed_page_ids[transaction_id] = []
+        self.borrowed_page_ids[transaction_id].append(page_id)
         return page_id
 
     def return_page_ids(self, page_ids: list[int]):
