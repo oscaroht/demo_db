@@ -54,7 +54,6 @@ class QueryPlanner:
         return StatusOperator("Success")
     
     def _plan_create(self, node: CreateStatement):
-        print("CREATE PLANING")
         native_types = [  TYPE_MAP[typ] for typ in node.column_types  ]
         table = Table(node.table_name, node.column_names, native_types)
         self.transaction.add_new_table(table)
