@@ -82,27 +82,32 @@ class Table:
     column_datatypes: List[Type]
     page_id: List[int] = field(default_factory=list)
 
+    def deepcopy(self):
+        return Table(table_name=self.table_name, column_names=self.column_names, column_datatypes=self.column_datatypes, page_id=self.page_id.copy())
+
 
 class Catalog:
     """Mock database schema information."""
     def __init__(self, tables: Iterable[Table]):
         self.tables = {table.table_name: table for table in tables}
         sorted_page_ids = sorted([id for table in tables for id in table.page_id])
-        print(f"Pages {sorted_page_ids}")
         self.free_page_ids = self._find_free_pages(sorted_page_ids)
-
-        print(f"Pages {sorted_page_ids}")
         self.max_page_id = sorted_page_ids[-1] if len(sorted_page_ids) else 0
         self.borrowed_page_ids = {}  # tranaction_id: page_id
 
     def _find_free_pages(self, sorted_page_ids: list[int]):
+        """Two pointer alogrithm to find gaps in array"""
         free_page_ids = []
         i = 1
-        while len(sorted_page_ids):
-            page_id = sorted_page_ids.pop(0)
+        j = 0
+        while j < len(sorted_page_ids):
+            page_id = sorted_page_ids[j]
             while i < page_id:
                 free_page_ids.append(i)
                 i += 1
+            else:
+                i+= 1
+            j += 1
         return free_page_ids
 
     def get_table_by_name(self, name: str):
