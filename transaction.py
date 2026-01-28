@@ -21,6 +21,7 @@ class Transaction:
         self.obtained_page_ids = []  # in case of rollback, give these ids back
         # in case of commit give these (removed) pages back)
         self.freed_page_ids = defaultdict(list[int])  # Table.table_map : [page_id, ]
+        self._has_terminated = False
 
     def get_table_by_name(self, name: str):
         table: None | Table = self.shadow_tables.get(name.lower())
@@ -31,7 +32,12 @@ class Transaction:
         table_name = table.table_name
         if table_name not in self.shadow_tables:
             # copy the table and put it in the shadow table map
-            self.shadow_tables[table_name] = table.deepcopy()
+            shadow_table = table.deepcopy()
+            if shadow_table.page_id == []:
+                self.get_new_page(shadow_table)
+            else:
+                self.get_existing_page_for_write(shadow_table, shadow_table.page_id[-1])
+            self.shadow_tables[table_name] = shadow_table
         return self.shadow_tables[table_name]
 
     def _swap_page_id(self, table: Table, old_page_id, new_page_id):
@@ -65,12 +71,12 @@ class Transaction:
         yield from self.buffer_manager.get_pages(table.page_id)
 
 
-    def get_existing_page_for_write(self, table: Table, old_pid):
+    def get_existing_page_for_write(self, shadow_table: Table, old_pid):
         """
         Creates a shadow page (copy) of the original page. Swaps the orignal page for the shadow page
         Returns the shadow page.
         """
-        shadow_table = self._get_or_create_shadow_table(table)
+        # shadow_table = self._get_or_create_shadow_table(table)
         # get the original page
         original_page = self.buffer_manager.get_page(old_pid)
         # get new page_id for the shadow
@@ -80,16 +86,16 @@ class Transaction:
         # copy content but swap page_id to the shaowpage
         self._swap_page_id(shadow_table, old_pid, shadow_pid)
         # free the old page id
-        self.freed_page_ids[table.table_name].append(old_pid)
+        self.freed_page_ids[shadow_table.table_name].append(old_pid)
         # put shadow in the buffer. Can spill to disk if need
         self.buffer_manager.put(shadow_page)
         return shadow_page
 
-    def get_new_page(self, table: Table) -> Page:
+    def get_new_page(self, shadow_table: Table) -> Page:
         """
         Allocates a brand new 'orphan' page for a table.
         """
-        shadow_table = self._get_or_create_shadow_table(table)
+        # shadow_table = self._get_or_create_shadow_table(table)
         # get new page_id
         new_pid = self._get_free_page_id()
         # create the blank page
@@ -107,6 +113,8 @@ class Transaction:
         - create or replace the Table object of modified or new tables
         - return all the old no longer valid pages
         """
+        if self._has_terminated:
+            return
         for name, table_obj in self.shadow_tables.items():
             if table_obj is None:
                 # Table was dropped
@@ -114,7 +122,9 @@ class Transaction:
                     self.catalog.drop_table_by_name(name)  # removes reference and frees page_ids
             else:
                 self.catalog.create_or_replace_table(table_obj)
-        self.catalog.return_page_ids(self.freed_page_ids)
+        self.catalog.return_page_ids([v for k, v in self.freed_page_ids.items()])
+        self._has_terminated = True
+
 
     def rollback(self):
         """In rollback none of the new pages get registered in the catalog.
@@ -124,3 +134,4 @@ class Transaction:
 
         Actively returning them is not necesary"""
         self.catalog.return_page_ids(self.obtained_page_ids)
+        self._has_terminated = True

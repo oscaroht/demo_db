@@ -136,6 +136,8 @@ class Catalog:
         return page_id
 
     def return_page_ids(self, page_ids: list[int]):
+        if not all([isinstance(x, int) for x in page_ids ]):
+            raise Exception("")
         self.free_page_ids += page_ids
 
     def add_new_table(self, table: Table):

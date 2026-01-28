@@ -61,15 +61,16 @@ class QueryPlanner:
 
     def _plan_insert(self, node: InsertStatement):
         table = self.transaction.get_table_by_name(node.table_name)
+        shadow_table = self.transaction._get_or_create_shadow_table(table)
         for col in node.columns:
-            if col.name not in table.column_names:
+            if col.name not in shadow_table.column_names:
                 raise Exception(f"Column {col.name} not in table {node.table_name}.")
 
         val_map = {col.name: i for i, col in enumerate(node.columns)}
         
         column_indices = []
         column_types = []
-        for tab_col, col_type in zip(table.column_names, table.column_datatypes):
+        for tab_col, col_type in zip(shadow_table.column_names, shadow_table.column_datatypes):
             if tab_col in val_map:
                 column_indices.append(val_map[tab_col])
                 column_types.append(col_type)
@@ -87,7 +88,7 @@ class QueryPlanner:
         else:
             gen = self._plan_select(node.select).next
 
-        return Insert(table, gen, column_indices, self.transaction)
+        return Insert(shadow_table, gen, column_indices, self.transaction)
 
 
     def _plan_select(self, stmt: SelectStatement) -> Operator:

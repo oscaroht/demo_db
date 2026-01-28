@@ -53,7 +53,8 @@ class DatabaseEngine:
             schema: Schema = query_plan_root.get_output_schema()
             column_names: List[str] = schema.get_names()
 
-            transaction.commit()
+            if request.auto_commit:
+                transaction.commit()
 
             return QueryResult(
                 columns=column_names,
@@ -62,7 +63,8 @@ class DatabaseEngine:
                 tokens=tokens,
                 ast=ast_root,
                 query_plan=query_plan_root,
-                rowcount=len(rows)
+                rowcount=len(rows),
+                transaction_id=transaction.id
             )
 
         except Exception:
@@ -75,4 +77,5 @@ class DatabaseEngine:
                 ast=ast_root,
                 query_plan=query_plan_root,
                 error=traceback.format_exc(),
+                transaction_id=transaction.id
             )

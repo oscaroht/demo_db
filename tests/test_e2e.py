@@ -1,10 +1,12 @@
 import pytest
 import os
+import catalog
 from engine import DatabaseEngine
 from buffermanager import BufferManager
 from diskmanager import DiskManager
 from catalog import Catalog
 from request import QueryRequest
+from transaction import Transaction
 
 DB_FILE = "test_system.db"
 
@@ -64,14 +66,14 @@ def test_rollback_atomicity(db_engine):
     
     # Since we can't easily force a crash mid-execution in this API, 
     # we will manually construct a transaction, dirty some pages, and call rollback.
-    txn = db_engine.get_new_transaction()
+    txn: Transaction = db_engine.get_new_transaction()
     table = db_engine.catalog.get_table_by_name("logs")
-    txn.get_new_page(table) # Allocate page
+    txn.drop_table_by_name(table.table_name) # Allocate page
     txn.rollback()
     
     # Verify the table in catalog doesn't have the new page
     # (Checking internal state for verification)
-    assert len(table.page_id) == 0
+    assert db_engine.catalog.get_table_by_name("logs") == table
 
 def test_data_durability_large_insert(db_engine):
     """3. Capacity: Insert more rows than buffer capacity (forcing swap), then read."""

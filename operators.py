@@ -63,7 +63,7 @@ class ScanOperator(Operator):
 
 class Insert(Operator):
     def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], transaction):
-        self.table = table
+        self.shadow_table = table
         self.data_generator = data_generator
         self.column_indices = column_indices
         self.transaction: Transaction = transaction
@@ -71,13 +71,12 @@ class Insert(Operator):
     def next(self):
         for raw_val_tuple in self.data_generator():
             new_row = self._prepare_row(raw_val_tuple)
-            page_ids = self.table.page_id
-            if page_ids == []:
-                page = self.transaction.get_new_page(self.table)
-            page = self.transaction.get_existing_page_for_write(self.table, page_ids[-1])
+            print(self.shadow_table.page_id[-1])
+            page = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
+            print(page.page_id)
             page_is_full = not page.add_row(new_row)
             if page_is_full:
-                page = self.transaction.get_new_page(self.table)
+                page = self.transaction.get_new_page(self.shadow_table)
                 page_is_full = not page.add_row(new_row)
                 if page_is_full:
                     raise Exception("Page size is to small for even 1 row!")
@@ -88,11 +87,10 @@ class Insert(Operator):
         new_row = []
         for src_idx in self.column_indices:
             if src_idx is not None:
-                typ = self.table.column_datatypes[len(new_row)]
+                typ = self.shadow_table.column_datatypes[len(new_row)]
                 val = raw_val_tuple[src_idx]
                 if isinstance(val, Literal):
                     val = val.value
-                print(f"Cast val {val} to type {str(typ)}")
                 new_row.append(typ(val))
             else:
                 new_row.append(None) # Default/Null
@@ -101,7 +99,7 @@ class Insert(Operator):
         
     def display_plan(self, level=0) -> str:
         indent = '  ' * level
-        return f"{indent}* Insert into: {self.table.table_name})"
+        return f"{indent}* Insert into: {self.shadow_table.table_name})"
     def get_output_schema(self) -> Schema:
         return Schema([ColumnIdentifier('status')])
 
