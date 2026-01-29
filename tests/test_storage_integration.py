@@ -72,7 +72,7 @@ def test_manual_commit_persistence(db_engine):
     db_engine.execute(req2)
     assert r1.transaction_id == 1
 
-    res = db_engine.execute(QueryRequest("SELECT val FROM data;"))
+    res = db_engine.execute(QueryRequest("SELECT val FROM data;", transaction_id=txn.id, auto_commit=False))
     assert res.rows == [(100,)]
     
     # 3. Commit manually

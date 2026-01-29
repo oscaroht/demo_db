@@ -35,7 +35,8 @@ def test_get_new_page_creates_shadow_table(transaction):
     transaction.catalog.get_table_by_name.return_value = original
     
     # Action: Get a new page (e.g., during insert)
-    transaction.get_new_page(original)
+    shadow_table = transaction.get_or_create_shadow_table(original)
+    transaction.get_new_page(shadow_table)
     
     # Assert: Shadow table exists
     assert "users" in transaction.shadow_tables
@@ -52,8 +53,8 @@ def test_copy_on_write_logic(transaction, mock_buffer_manager):
     transaction.catalog.get_table_by_name.return_value = original
     
     # Action: Request existing page for write
-    shadow_table = transaction._get_or_create_shadow_table(original)
-    shadow_page = shadow_table.page_id[-1]
+    shadow_table = transaction.get_or_create_shadow_table(original)
+    shadow_page = transaction.prepare_shadow_table_for_write(shadow_table)
     
     # Assert: A new page ID was allocated (100)
     assert shadow_page.page_id == 100

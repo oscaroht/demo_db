@@ -64,16 +64,15 @@ class ScanOperator(Operator):
 class Insert(Operator):
     def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], transaction):
         self.shadow_table = table
+        self.transaction: Transaction = transaction
+        self.transaction.prepare_shadow_table_for_write(self.shadow_table)
         self.data_generator = data_generator
         self.column_indices = column_indices
-        self.transaction: Transaction = transaction
 
     def next(self):
         for raw_val_tuple in self.data_generator():
             new_row = self._prepare_row(raw_val_tuple)
-            print(self.shadow_table.page_id[-1])
             page = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
-            print(page.page_id)
             page_is_full = not page.add_row(new_row)
             if page_is_full:
                 page = self.transaction.get_new_page(self.shadow_table)

@@ -61,7 +61,7 @@ class QueryPlanner:
 
     def _plan_insert(self, node: InsertStatement):
         table = self.transaction.get_table_by_name(node.table_name)
-        shadow_table = self.transaction._get_or_create_shadow_table(table)
+        shadow_table = self.transaction.get_or_create_shadow_table(table)
         for col in node.columns:
             if col.name not in shadow_table.column_names:
                 raise Exception(f"Column {col.name} not in table {node.table_name}.")
@@ -156,6 +156,7 @@ class QueryPlanner:
             table_name = node.name
             alias = node.alias or node.name
             table: Table = self.transaction.get_table_by_name(table_name)
+            print(table)
             cols: list[str] = table.column_names
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])

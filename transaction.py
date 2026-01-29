@@ -1,5 +1,5 @@
 from buffermanager import BufferManager
-from catalog import Page, Table
+from catalog import Page, Table, Catalog
 from collections import defaultdict
 
 class Transaction:
@@ -15,12 +15,12 @@ class Transaction:
         """
         self.id = id
         self.buffer_manager: BufferManager = buffer_manager
-        self.catalog = catalog
+        self.catalog: Catalog = catalog
         # Keep track of which tables we modified so we can update them at commit
         self.shadow_tables = {}  # Table.table_name: Table
-        self.obtained_page_ids = []  # in case of rollback, give these ids back
+        self.obtained_page_ids = set()  # in case of rollback, give these ids back
         # in case of commit give these (removed) pages back)
-        self.freed_page_ids = defaultdict(list[int])  # Table.table_map : [page_id, ]
+        self.freed_page_ids = []
         self._has_terminated = False
 
     def get_table_by_name(self, name: str):
@@ -28,17 +28,24 @@ class Transaction:
         if table: return table
         return self.catalog.get_table_by_name(name)
 
-    def _get_or_create_shadow_table(self, table: Table) -> Table:
+    def get_or_create_shadow_table(self, table: Table) -> Table:
         table_name = table.table_name
         if table_name not in self.shadow_tables:
             # copy the table and put it in the shadow table map
+            # if the transaction is successfull this will be the new table object
             shadow_table = table.deepcopy()
-            if shadow_table.page_id == []:
-                self.get_new_page(shadow_table)
-            else:
-                self._get_existing_page_for_write(shadow_table, shadow_table.page_id[-1])
             self.shadow_tables[table_name] = shadow_table
         return self.shadow_tables[table_name]
+    
+    def prepare_shadow_table_for_write(self, shadow_table: Table):
+        if not shadow_table.table_name in self.shadow_tables:
+            raise Exception("Not a shadow table")
+        if shadow_table.page_id == []:
+            # attach a new shadow page
+            return self.get_new_page(shadow_table)
+        else:
+            # swap the current latest page for a shadow page
+            return self._get_existing_page_for_write(shadow_table, shadow_table.page_id[-1])
 
     def _swap_page_id(self, table: Table, old_page_id, new_page_id):
         idx = table.page_id.index(old_page_id)
@@ -47,7 +54,7 @@ class Transaction:
 
     def _get_free_page_id(self) -> int:
         page_id = self.catalog.get_free_page_id(self.id)
-        self.obtained_page_ids.append(page_id)
+        self.obtained_page_ids.add(page_id)
         return page_id
 
     def add_new_table(self, table: Table):
@@ -63,7 +70,7 @@ class Transaction:
     
     def drop_table_by_name(self, name: str):
         table = self.get_table_by_name(name)
-        self.freed_page_ids[table.table_name] += table.page_id  # free all pages
+        self.freed_page_ids += table.page_id  # free all pages
         self.shadow_tables[table.table_name] = None  # remove the referenced
 
     def get_page_generator_from_table_by_name(self, name):
@@ -76,7 +83,6 @@ class Transaction:
         Creates a shadow page (copy) of the original page. Swaps the orignal page for the shadow page
         Returns the shadow page.
         """
-        # shadow_table = self._get_or_create_shadow_table(table)
         # get the original page
         original_page = self.buffer_manager.get_page(old_pid)
         # get new page_id for the shadow
@@ -86,7 +92,7 @@ class Transaction:
         # copy content but swap page_id to the shaowpage
         self._swap_page_id(shadow_table, old_pid, shadow_pid)
         # free the old page id
-        self.freed_page_ids[shadow_table.table_name].append(old_pid)
+        self.freed_page_ids.append(old_pid)
         # put shadow in the buffer. Can spill to disk if need
         self.buffer_manager.put(shadow_page)
         return shadow_page
@@ -95,7 +101,8 @@ class Transaction:
         """
         Allocates a brand new 'orphan' page for a table.
         """
-        # shadow_table = self._get_or_create_shadow_table(table)
+        if shadow_table.table_name not in self.shadow_tables:
+            raise Exception("Table is not a shadow table")
         # get new page_id
         new_pid = self._get_free_page_id()
         # create the blank page
@@ -103,6 +110,7 @@ class Transaction:
         # put in buffer so it can spill to disk if memory is tight
         self.buffer_manager.put(new_page)
         # register new page_id
+        print(f"append {new_pid}")
         shadow_table.page_id.append(new_pid)
         return new_page
 
@@ -122,7 +130,7 @@ class Transaction:
                     self.catalog.drop_table_by_name(name)  # removes reference and frees page_ids
             else:
                 self.catalog.create_or_replace_table(table_obj)
-        self.catalog.return_page_ids([v for k, v in self.freed_page_ids.items()])
+        self.catalog.return_page_ids(list(self.freed_page_ids))
         self._has_terminated = True
 
 
@@ -131,5 +139,5 @@ class Transaction:
         However, the obtained page_ids are returned to the free list. The 
         new Table objects an pages will be overwriten since they are marked
         as free page ids."""
-        self.catalog.return_page_ids(self.obtained_page_ids)
+        self.catalog.return_page_ids(list(self.obtained_page_ids))
         self._has_terminated = True
