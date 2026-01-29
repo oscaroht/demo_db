@@ -52,7 +52,8 @@ def test_copy_on_write_logic(transaction, mock_buffer_manager):
     transaction.catalog.get_table_by_name.return_value = original
     
     # Action: Request existing page for write
-    shadow_page = transaction.get_existing_page_for_write(original, 1)
+    shadow_table = transaction._get_or_create_shadow_table(original)
+    shadow_page = shadow_table.page_id[-1]
     
     # Assert: A new page ID was allocated (100)
     assert shadow_page.page_id == 100

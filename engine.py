@@ -79,3 +79,6 @@ class DatabaseEngine:
                 error=traceback.format_exc(),
                 transaction_id=transaction.id
             )
+        finally:
+            if request.auto_commit and transaction.id in self.transactions:
+                del self.transactions[transaction.id]

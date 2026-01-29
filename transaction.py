@@ -36,7 +36,7 @@ class Transaction:
             if shadow_table.page_id == []:
                 self.get_new_page(shadow_table)
             else:
-                self.get_existing_page_for_write(shadow_table, shadow_table.page_id[-1])
+                self._get_existing_page_for_write(shadow_table, shadow_table.page_id[-1])
             self.shadow_tables[table_name] = shadow_table
         return self.shadow_tables[table_name]
 
@@ -71,7 +71,7 @@ class Transaction:
         yield from self.buffer_manager.get_pages(table.page_id)
 
 
-    def get_existing_page_for_write(self, shadow_table: Table, old_pid):
+    def _get_existing_page_for_write(self, shadow_table: Table, old_pid):
         """
         Creates a shadow page (copy) of the original page. Swaps the orignal page for the shadow page
         Returns the shadow page.
@@ -130,8 +130,6 @@ class Transaction:
         """In rollback none of the new pages get registered in the catalog.
         However, the obtained page_ids are returned to the free list. The 
         new Table objects an pages will be overwriten since they are marked
-        as free page ids.
-
-        Actively returning them is not necesary"""
+        as free page ids."""
         self.catalog.return_page_ids(self.obtained_page_ids)
         self._has_terminated = True

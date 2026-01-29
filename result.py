@@ -13,6 +13,6 @@ class QueryResult:
     tokens: List[str]
     ast: ASTNode
     query_plan: Operator
-    transaction_id: str
+    transaction_id: int
     rowcount: Optional[int] = None
     error: Optional[str] = None
