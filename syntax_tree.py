@@ -122,12 +122,6 @@ class BinaryOp(Expression):
     def get_lookup_name(self):
         return f"{self.left.get_lookup_name()} {self.op} {self.right.get_lookup_name()}"
 
-class Comparison(BinaryOp):
-    pass
-class Arithmetic(BinaryOp):
-    pass
-class LogicalExpression(BinaryOp):
-    pass
 class GroupByClause(ASTNode):
     """Represents the GROUP BY clause: a list of ColumnRef nodes."""
     def __init__(self, columns: List[ColumnRef]):

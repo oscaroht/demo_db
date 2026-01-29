@@ -2,8 +2,7 @@ import pytest
 from sql_interpreter import tokenize, TokenStream, Parser
 from syntax_tree import (
     SelectStatement, CreateStatement, InsertStatement, DropStatement,
-    ColumnRef, Literal, Comparison, BinaryOp,
-    AggregateCall, OrderByClause, GroupByClause, LimitClause,
+    BinaryOp, AggregateCall, OrderByClause, GroupByClause, LimitClause,
     TableRef, Join, Star
 )
 
@@ -34,12 +33,12 @@ def test_join_syntax():
     assert ast.from_clause.left.alias == "e"
     assert ast.from_clause.right.alias == "c"
     # In your syntax_tree, Join condition is a BinaryOp
-    assert isinstance(ast.from_clause.condition, (BinaryOp, Comparison))
+    assert isinstance(ast.from_clause.condition, BinaryOp)
     assert ast.from_clause.condition.op == "="
 
 def test_where_simple_comparison():
     ast = parse("SELECT id FROM users WHERE age > 18;")
-    assert isinstance(ast.where_clause, Comparison)
+    assert isinstance(ast.where_clause, BinaryOp)
     assert ast.where_clause.op == ">"
     assert ast.where_clause.left.name == "age"
     assert ast.where_clause.right.value == 18
@@ -80,7 +79,7 @@ def test_logical_and_precedence():
     # Logical AND is a BinaryOp in your tree
     assert isinstance(ast.where_clause, BinaryOp)
     assert ast.where_clause.op == "AND"
-    assert isinstance(ast.where_clause.left, Comparison)
+    assert isinstance(ast.where_clause.left, BinaryOp)
 
 def test_arithmetic_precedence():
     ast = parse("SELECT 1 + 2 * 3 FROM t;")

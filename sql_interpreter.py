@@ -1,6 +1,6 @@
 from enum import StrEnum, auto
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement
+from syntax_tree import Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement
 import re
 
 class qtype(StrEnum):
@@ -351,8 +351,7 @@ class Parser:
             right = self._parse_table_ref()
 
             self.stream.match(qtrans.ON)
-            condition = self._parse_logical_expression()
-
+            condition = self._parse_expression(0)
             left = Join(left, right, condition)
 
         return left
@@ -525,60 +524,6 @@ class Parser:
             value = float(token)
         self.stream.advance()
         return Literal(value)
-
-    def _parse_logical_expression(self) -> Comparison | LogicalExpression:
-        """
-        Handles OR conditions (Lowest Precedence).
-        <LogicalExpression> -> <AndExpression> ( OR <AndExpression> )*
-        """
-        left_node = self._parse_and_expression()
-
-        while self.stream.current() == qtrans.OR:
-            op = self.stream.match(qtrans.OR)
-            right_node = self._parse_and_expression()
-            left_node = LogicalExpression(op, left_node, right_node)
-            
-        return left_node
-
-    def _parse_and_expression(self) -> Comparison | LogicalExpression:
-        """
-        Handles AND conditions (Higher Precedence).
-        <AndExpression> -> <Comparison> ( AND <Comparison> )*
-        """
-        left_node = self._parse_comparison()
-
-        while self.stream.current() == qtrans.AND:
-            op = self.stream.match(qtrans.AND)
-            right_node = self._parse_comparison()
-            left_node = LogicalExpression(op, left_node, right_node)
-        return left_node
-
-    def _parse_comparison(self) -> Comparison | LogicalExpression:
-        """
-        Handles simple comparisons or parenthesized expressions.
-        <Comparison> -> <Operand> <Operator> <Operand> | ( <LogicalExpression> )
-        """
-        
-        current = self.stream.current()
-        
-        if current == '(':
-            self.stream.match('(')
-            node = self._parse_logical_expression() # Recurse back to the highest precedence
-            self.stream.match(')')
-            return node
-        
-        left_operand = self._parse_operand()
-        
-        # Check for comparison operator
-        comparison_op = self.stream.current()
-        if comparison_op in comparators_arithmatic_symbols:
-            self.stream.advance()
-            right_operand = self._parse_operand()
-            return Comparison(comparison_op, left_operand, right_operand)
-
-        # If it wasn't a comparison and not parentheses, it's an error
-        raise SyntaxError(f"Expected comparison operator or '(' at: {current}")
-
 
     def _parse_operand(self) -> ColumnRef | Literal:
         """
