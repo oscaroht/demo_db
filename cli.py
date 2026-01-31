@@ -33,7 +33,7 @@ def repl(engine: DatabaseEngine):
 
     welcome_msg = """Welcome to Oscar db. This is a db for educatioinal purposes. Begin by creating a table and insert some data. \n 
 
-explain - turn on abstract syntax tree and query plan visualization
+explain - toggle abstract syntax tree and query plan visualization
 exit    - exit program
 quit    - same as exit
 clear   - clear the terminal text
@@ -56,6 +56,7 @@ clear   - clear the terminal text
                 continue
             if sql.lower() == "explain":
                 explain = True
+                continue
 
             request = QueryRequest(sql=sql, transaction_id=transaction_id)
             result = engine.execute(request)
