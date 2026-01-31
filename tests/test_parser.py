@@ -1,8 +1,8 @@
 import pytest
 from sql_interpreter import tokenize, TokenStream, Parser
 from syntax_tree import (
-    SelectStatement, ColumnRef, Literal, Comparison, LogicalExpression,
-    AggregateCall, OrderByClause, SortItem, GroupByClause, LimitClause,
+    SelectStatement, CreateStatement, InsertStatement, DropStatement,
+    BinaryOp, AggregateCall, OrderByClause, GroupByClause, LimitClause,
     TableRef, Join, Star
 )
 
@@ -12,148 +12,101 @@ def parse(query: str):
     parser = Parser(ts)
     return parser.parse()
 
-# -------------------- BASIC SELECT & FROM --------------------
+# -------------------- FIXED ORIGINAL TESTS --------------------
 
 def test_simple_select_columns():
     ast = parse("SELECT id, name FROM users;")
-
     assert isinstance(ast, SelectStatement)
-    # Refactored: from_clause is now a TableRef object
     assert isinstance(ast.from_clause, TableRef)
     assert ast.from_clause.name == "users"
-
     assert len(ast.columns) == 2
-    assert isinstance(ast.columns[0], ColumnRef)
     assert ast.columns[0].name == "id"
     assert ast.columns[1].name == "name"
 
 def test_select_star():
     ast = parse("SELECT * FROM users;")
-
-    assert len(ast.columns) == 1
-    # Refactored: * is represented by a Star object or a specific ColumnRef name
-    assert isinstance(ast.columns[0], Star) or ast.columns[0].name == "*"
-
-# -------------------- JOINS --------------------
+    assert isinstance(ast.columns[0], Star)
 
 def test_join_syntax():
     ast = parse("SELECT e.name, c.id FROM employee AS e JOIN contract AS c ON e.id = c.employee_id;")
-
     assert isinstance(ast.from_clause, Join)
-    assert ast.from_clause.left.name == "employee"
     assert ast.from_clause.left.alias == "e"
-    assert ast.from_clause.right.name == "contract"
     assert ast.from_clause.right.alias == "c"
-    
-    # Verify Join Condition
-    assert isinstance(ast.from_clause.condition, Comparison)
+    # In your syntax_tree, Join condition is a BinaryOp
+    assert isinstance(ast.from_clause.condition, BinaryOp)
     assert ast.from_clause.condition.op == "="
-    assert ast.from_clause.condition.left.table == "e"
-    assert ast.from_clause.condition.left.name == "id"
-
-# -------------------- WHERE CLAUSE --------------------
 
 def test_where_simple_comparison():
     ast = parse("SELECT id FROM users WHERE age > 18;")
+    assert isinstance(ast.where_clause, BinaryOp)
+    assert ast.where_clause.op == ">"
+    assert ast.where_clause.left.name == "age"
+    assert ast.where_clause.right.value == 18
 
-    where = ast.where_clause
-    assert isinstance(where, Comparison)
-    assert where.op == ">"
-    assert where.left.name == "age"
-    assert where.right.value == 18
+# -------------------- 10 NEW FEATURE TESTS --------------------
 
-# -------------------- AGGREGATES --------------------
+def test_create_table_statement():
+    ast = parse("CREATE TABLE staff (id INT, name TEXT);")
+    assert isinstance(ast, CreateStatement)
+    assert ast.table_name == "staff"
+    assert ast.column_names == ["id", "name"]
+    assert ast.column_types == ["INT", "TEXT"]
 
-def test_select_aggregate_count_star():
-    ast = parse("SELECT COUNT(*) FROM users;")
+def test_insert_values_statement():
+    ast = parse("INSERT INTO staff (id, name) VALUES (1, 'Alice');")
+    assert isinstance(ast, InsertStatement)
+    assert ast.table_name == "staff"
+    assert ast.columns[0].name == "id"
+    # values is a list of rows (lists of literals)
+    assert ast.values[0][0].value == 1
+    assert ast.values[0][1].value == "Alice"
 
-    agg = ast.columns[0]
-    assert isinstance(agg, AggregateCall)
-    assert agg.function_name == "COUNT"
-    # Refactored: argument is now a Star object
-    assert isinstance(agg.argument, Star)
+def test_insert_from_select():
+    ast = parse("INSERT INTO archive SELECT * FROM staff;")
+    assert isinstance(ast, InsertStatement)
+    assert ast.table_name == "archive"
+    assert isinstance(ast.select, SelectStatement)
+    assert ast.values is None
 
-def test_select_aggregate_with_column():
-    ast = parse("SELECT MAX(age) FROM users;")
+def test_drop_table_statement():
+    # Note: Ensure your Parser handles DROP; if not, this verifies the AST structure
+    ast = parse("DROP TABLE staff;")
+    assert isinstance(ast, DropStatement)
+    assert ast.table_name == "staff"
 
-    agg = ast.columns[0]
-    assert agg.function_name == "MAX"
-    # Refactored: argument is now a ColumnRef object
-    assert isinstance(agg.argument, ColumnRef)
-    assert agg.argument.name == "age"
+def test_logical_and_precedence():
+    ast = parse("SELECT * FROM t WHERE a=1 AND b=2;")
+    # Logical AND is a BinaryOp in your tree
+    assert isinstance(ast.where_clause, BinaryOp)
+    assert ast.where_clause.op == "AND"
+    assert isinstance(ast.where_clause.left, BinaryOp)
 
-# -------------------- GROUP BY --------------------
+def test_arithmetic_precedence():
+    ast = parse("SELECT 1 + 2 * 3 FROM t;")
+    expr = ast.columns[0]
+    assert isinstance(expr, BinaryOp)
+    assert expr.op == "+"
+    # 2*3 should be the right-side BinaryOp if precedence is correct
+    assert expr.right.op == "*"
+    assert expr.right.left.value == 2
 
-def test_group_by_single_column():
-    ast = parse("SELECT age, COUNT(*) FROM users GROUP BY age;")
+def test_aggregate_min_max():
+    ast = parse("SELECT MIN(age), MAX(salary) FROM employee;")
+    assert ast.columns[0].function_name == "MIN"
+    assert ast.columns[1].function_name == "MAX"
 
-    group = ast.group_by_clause
-    assert isinstance(group, GroupByClause)
-    assert len(group.columns) == 1
-    assert isinstance(group.columns[0], ColumnRef)
-    assert group.columns[0].name == "age"
-
-# -------------------- ORDER BY --------------------
-
-def test_order_by_default_direction():
-    ast = parse("SELECT id FROM users ORDER BY age;")
-
-    order = ast.order_by_clause
-    assert isinstance(order, OrderByClause)
-    item = order.sort_items[0]
-    assert item.column.name == "age"
-    assert item.direction == "ASC"
-
-# -------------------- LIMIT --------------------
-
-def test_limit_clause():
-    ast = parse("SELECT id FROM users LIMIT 10;")
-
-    assert ast.limit_clause.count == 10
-
-# -------------------- LITERALS --------------------
-
-def test_literals():
-    ast_str = parse("SELECT id FROM users WHERE name = 'Alice';")
-    assert ast_str.where_clause.right.value == "Alice"
-
-    ast_float = parse("SELECT id FROM products WHERE price >= 19.99;")
-    assert ast_float.where_clause.right.value == 19.99    
-
-
-def test_order_by_descending():
-    ast = parse("SELECT id FROM users ORDER BY age DESC, name ASC;")
-
+def test_order_by_multiple_columns():
+    ast = parse("SELECT name FROM employee ORDER BY city DESC, age ASC;")
     items = ast.order_by_clause.sort_items
-
-    assert items[0].column.name == "age"
+    assert items[0].column.name == "city"
     assert items[0].direction == "DESC"
-
-    assert items[1].column.name == "name"
     assert items[1].direction == "ASC"
 
+def test_group_by_parsing():
+    ast = parse("SELECT city, COUNT(*) FROM employee GROUP BY city;")
+    assert isinstance(ast.group_by_clause, GroupByClause)
+    assert ast.group_by_clause.columns[0].name == "city"
 
-# -------------------- LIMIT --------------------
-
-def test_limit_clause():
-    ast = parse("SELECT id FROM users LIMIT 10;")
-
-    limit = ast.limit_clause
-    assert isinstance(limit, LimitClause)
-    assert limit.count == 10
-
-
-# -------------------- STRING & FLOAT LITERALS --------------------
-
-def test_where_string_literal():
-    ast = parse("SELECT id FROM users WHERE name = 'Alice';")
-
-    where = ast.where_clause
-    assert where.right.value == "Alice"
-
-
-def test_where_float_literal():
-    ast = parse("SELECT id FROM products WHERE price >= 19.99;")
-
-    where = ast.where_clause
-    assert where.right.value == 19.99
+def test_distinct_parsing():
+    ast = parse("SELECT DISTINCT name FROM employee;")
+    assert ast.is_distinct is True

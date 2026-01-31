@@ -122,12 +122,6 @@ class BinaryOp(Expression):
     def get_lookup_name(self):
         return f"{self.left.get_lookup_name()} {self.op} {self.right.get_lookup_name()}"
 
-class Comparison(BinaryOp):
-    pass
-class Arithmetic(BinaryOp):
-    pass
-class LogicalExpression(BinaryOp):
-    pass
 class GroupByClause(ASTNode):
     """Represents the GROUP BY clause: a list of ColumnRef nodes."""
     def __init__(self, columns: List[ColumnRef]):
@@ -150,3 +144,25 @@ class SelectStatement(ASTNode):
         self.is_distinct = is_distinct
         self.order_by_clause = order_by_clause
         self.limit_clause = limit_clause
+
+class CreateStatement(ASTNode):
+    def __init__(self, table_name, column_names, column_types) -> None:
+        self.table_name = table_name
+        self.column_names = column_names
+        self.column_types = column_types
+
+class InsertStatement(ASTNode):
+    def __init__(self, table_name, columns, values=None, select=None) -> None:
+        self.table_name = table_name
+        self.columns: list[ColumnRef] = columns
+        self.values: None | list[Literal] = values
+        self.select: None | SelectStatement = select
+
+class DropStatement(ASTNode):
+    def __init__(self, table_name: str) -> None:
+        self.table_name = table_name
+
+class TransactionModifier(ASTNode): pass
+class BeginStatement(TransactionModifier): pass
+class CommitStatement(TransactionModifier): pass
+class RollbackStatement(TransactionModifier): pass

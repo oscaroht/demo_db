@@ -1,9 +1,12 @@
 import abc
-from typing import Callable, Generator, List, Any, Optional
+from typing import Callable, Generator, List, Any, Literal, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
+from catalog import Table, Catalog, Page
+from syntax_tree import Literal
 
-from schema import Schema
+from schema import ColumnIdentifier, Schema
+from transaction import Transaction
 Row = tuple[Any, ...]
 
 @dataclass
@@ -29,14 +32,27 @@ class Operator(abc.ABC):
         """Returns the column names that this operator outputs."""
         raise NotImplementedError
 
-class ScanOperator(Operator):
-    def __init__(self, table_name: str, data_generator, schema: Schema):
-        self.table_name = table_name
-        self.data_generator = data_generator
-        self.schema = schema
-
+class StatusOperator(Operator):
+    def __init__(self, status: str) -> None:
+        self.status = status
     def next(self):
-        yield from self.data_generator()
+        yield tuple([self.status])
+    def display_plan(self, level: int = 0) -> str:
+        pass
+    def get_output_schema(self) -> Schema:
+        return Schema([ColumnIdentifier('status')])
+
+
+class ScanOperator(Operator):
+    def __init__(self, table_display_name: str, page_generator, schema: Schema):
+        self.table_name = table_display_name
+        self.schema = schema
+        self.gen = page_generator
+        
+    def next(self):
+        for page in self.gen:
+            for row in page.data:
+                yield row
 
     def get_output_schema(self) -> Schema:
         return self.schema
@@ -44,6 +60,50 @@ class ScanOperator(Operator):
     def display_plan(self, level=0) -> str:
         indent = '  ' * level
         return f"{indent}* TableScan (Source: {self.table_name})"
+
+class Insert(Operator):
+    def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], transaction):
+        self.shadow_table = table
+        self.transaction: Transaction = transaction
+        self.transaction.prepare_shadow_table_for_write(self.shadow_table)
+        self.data_generator = data_generator
+        self.column_indices = column_indices
+
+    def next(self):
+        for raw_val_tuple in self.data_generator():
+            new_row = self._prepare_row(raw_val_tuple)
+            page = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
+            page_is_full = not page.add_row(new_row)
+            if page_is_full:
+                page = self.transaction.get_new_page(self.shadow_table)
+                page_is_full = not page.add_row(new_row)
+                if page_is_full:
+                    raise Exception("Page size is to small for even 1 row!")
+        yield(tuple(['SUCCESS']))
+
+
+    def _prepare_row(self, raw_val_tuple) -> Row:
+        new_row = []
+        for src_idx in self.column_indices:
+            if src_idx is not None:
+                typ = self.shadow_table.column_datatypes[len(new_row)]
+                val = raw_val_tuple[src_idx]
+                if isinstance(val, Literal):
+                    val = val.value
+                new_row.append(typ(val))
+            else:
+                new_row.append(None) # Default/Null
+        return tuple(new_row)
+
+        
+    def display_plan(self, level=0) -> str:
+        indent = '  ' * level
+        return f"{indent}* Insert into: {self.shadow_table.table_name})"
+    def get_output_schema(self) -> Schema:
+        return Schema([ColumnIdentifier('status')])
+
+
+
 
 class Filter(Operator):
     def __init__(self, predicate: Callable, parent: Operator):

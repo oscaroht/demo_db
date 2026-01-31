@@ -1,3 +1,4 @@
+from enums import TransactionStatus
 from syntax_tree import ASTNode
 from operators import Operator
 
@@ -13,5 +14,7 @@ class QueryResult:
     tokens: List[str]
     ast: ASTNode
     query_plan: Operator
+    transaction_id: int
+    transaction_status: TransactionStatus
     rowcount: Optional[int] = None
     error: Optional[str] = None

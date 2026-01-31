@@ -1,5 +1,10 @@
-from catalog import Catalog
+import buffermanager
+from catalog import Catalog, Table, Page
+import catalog
+import diskmanager
 from engine import DatabaseEngine
+from diskmanager import DiskManager
+from buffermanager import BufferManager
 from cli import repl
 
 table_data = {"employee":[
@@ -17,30 +22,30 @@ table_data = {"employee":[
                   (5, 3, '2026-01-01', '2026-03-31')],
 }
 
-class MockBufferManager:
-    def __init__(self, table_data_map: dict):
-        """Initializes the mock with in-memory data for all tables."""
-        self.table_data_map = table_data_map
-
-    def get_data_generator(self, table_name: str):
-        """
-        Simulates the Buffer Manager fetching pages and returning a stream 
-        of rows (tuples) for a specific table scan.
-        """
-        # Logic remains the same: Look up table name and return a row generator
-        table_name_lower = table_name.lower()
-        # ... (rest of the generator logic) ...
-        # Return the generator function
-        def data_generator():
-            yield from self.table_data_map[table_name_lower]
-        return data_generator
-
 mock_schema = {
     'employee': ['id', 'name', 'age', 'city', 'salary'],
     'contract': ['id', 'employee_id', 'start_date', 'end_date'],
 }
-mock_catalog = Catalog(mock_schema)
-mock_buffer_manager = MockBufferManager(table_data)
+table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1] )
+table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
 
-engine = DatabaseEngine(mock_catalog, mock_buffer_manager)
+diskmanager = DiskManager('.db')
+buffermanager = BufferManager(diskmanager, 10)
+
+catalog_page = buffermanager.get_page(0)
+catalog = Catalog.from_page(catalog_page)
+
+BOOTSTRAP = False  # fills the database with dummy data
+
+if BOOTSTRAP:
+    catalog = Catalog([table1, table2])
+    rows = table_data['employee']
+    buffermanager.put(Page(1, rows, is_dirty=True))
+    rows = table_data['contract']
+    buffermanager.put(Page(2, rows, is_dirty=True))
+
+engine = DatabaseEngine(catalog, buffermanager)
 repl(engine)
+diskmanager.write_page(catalog.to_page())
+buffermanager.flush()
+

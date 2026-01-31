@@ -1,13 +1,9 @@
+from enums import TransactionStatus
 from request import QueryRequest
 from result import QueryResult
 from engine import DatabaseEngine
-from sql_interpreter import qtrans, qcomparators, qarithmaticoperators, qseparators, qtype
 
 import readline
-import re
-from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.styles import Style
-from prompt_toolkit import PromptSession
 
 import os
 import sys
@@ -17,72 +13,6 @@ def clear_screen():
         os.system("cls")
     else:
         os.system("clear")
-
-SQL_STYLE = Style.from_dict({
-    "keyword": "bold ansiblue",
-    "operator": "ansiyellow",
-    "comparator": "ansired",
-    "number": "ansimagenta",
-    "string": "ansigreen",
-    "punctuation": "ansicyan",
-    "default": "",
-})
-
-KEYWORDS = {e.value.upper() for e in qtype} | {e.value.upper() for e in qtrans}
-OPERATORS = {e.value for e in qarithmaticoperators}
-COMPARATORS = {e.value for e in qcomparators}
-
-class SQLLexer(Lexer):
-    def lex_document(self, document):
-        lines = document.text.splitlines()
-
-        def get_line(lineno):
-            if lineno >= len(lines):
-                return []
-
-            line = lines[lineno]
-            tokens = []
-
-            i = 0
-            while i < len(line):
-                c = line[i]
-
-                # Match multi-character tokens first
-                if line[i:i+2] in COMPARATORS:
-                    tokens.append(("class:comparator", line[i:i+2]))
-                    i += 2
-                elif c in COMPARATORS or c in OPERATORS:
-                    tokens.append(("class:operator", c))
-                    i += 1
-                elif c.isspace():
-                    tokens.append(("class:default", c))
-                    i += 1
-                else:
-                    # Match words (keywords, identifiers, numbers, strings)
-                    m = re.match(r"[a-zA-Z_][a-zA-Z0-9_]*", line[i:])
-                    if m:
-                        word = m.group(0)
-                        if word.upper() in KEYWORDS:
-                            tokens.append(("class:keyword", word))
-                        else:
-                            tokens.append(("class:identifier", word))
-                        i += len(word)
-                    else:
-                        # Any other single char
-                        tokens.append(("class:default", c))
-                        i += 1
-
-            return tokens
-
-        return get_line
-
-session = PromptSession(
-    lexer=SQLLexer(),
-    style=SQL_STYLE,
-    multiline=False,
-    prompt_continuation="... ",
-)
-
 
 logo = """
 
@@ -99,25 +29,23 @@ logo = """
 
 
 
-def repl(engine: DatabaseEngine, prompt_session: None | PromptSession = None ):
+def repl(engine: DatabaseEngine):
 
-    welcome_msg = """Welcome to Oscar db. This is a db for demonstration purposes. Currently there are 2 tables: employee and contract \n 
-Supported: SELECT * | expression [ AS ...] FROM table_name [ JOIN table_name ] [ON ...] [ WHERE ... ] [ GROUP BY ... ] [ ORDER BY ... ] [ LIMIT ... ] ;
+    welcome_msg = """Welcome to Oscar db. This is a db for educatioinal purposes. Begin by creating a table and insert some data. \n 
 
-Suggestion for first query: SELECT * FROM employee;
-
-exit  - exit program
-quit  - same as exit
-clear - clear the terminal text
+explain - turn on abstract syntax tree and query plan visualization
+exit    - exit program
+quit    - same as exit
+clear   - clear the terminal text
                       """
     print(logo)
     print(welcome_msg)
+    explain = False
+    transaction_id = -1  # start a new transaction
     while True:
         try:
-            get_input = input
-            if prompt_session:
-                get_input = prompt_session.prompt
-            sql = get_input("db> ").strip()
+            prefix = f"({transaction_id}) " if transaction_id!= -1 else ""
+            sql = input( prefix + "db> ").strip()
 
             if not sql:
                 continue
@@ -126,16 +54,22 @@ clear - clear the terminal text
             if sql.lower() == "clear":
                 clear_screen()
                 continue
+            if sql.lower() == "explain":
+                explain = True
 
-            request = QueryRequest(sql=sql)
+            request = QueryRequest(sql=sql, transaction_id=transaction_id)
             result = engine.execute(request)
-            render_result(result)
+            render_result(result, explain)
+
+            transaction_id = result.transaction_id  # if transaction has started, keep going
+            if result.transaction_status == TransactionStatus.CLOSED:
+                transaction_id = -1
 
         except KeyboardInterrupt:
             print("\nbye")
             break
 
-def render_result(result: QueryResult):
+def render_result(result: QueryResult, explain: bool):
     """
     Formats and prints query results in an ASCII table.
     """
@@ -144,20 +78,8 @@ def render_result(result: QueryResult):
     columns = result.columns
     results = result.rows
 
-    if result.tokens:
-        print("\n" + "="*80)
-        print(f"TOKENS:")
-        print(result.tokens)
-
-    if result.ast:
-        print("\n" + "="*80)
-        print(f"ABSTRACT SYNTAX TREE:")
-        print(result.ast.display())
-
-    if result.query_plan:
-        print("\n" + "="*80)
-        print("QUERY PLAN:")
-        print(result.query_plan.display_plan())
+    if explain:
+        render_explain(result)
 
     print("\n" + "="*80)
     print(f"QUERY: {query_string}")
@@ -206,3 +128,19 @@ def render_result(result: QueryResult):
     print(separator)
     print(f"({len(results)} rows in set)")
     print("="*80)
+
+def render_explain(result):
+    if result.tokens:
+        print("\n" + "="*80)
+        print(f"TOKENS:")
+        print(result.tokens)
+
+    if result.ast:
+        print("\n" + "="*80)
+        print(f"ABSTRACT SYNTAX TREE:")
+        print(result.ast.display())
+
+    if result.query_plan:
+        print("\n" + "="*80)
+        print("QUERY PLAN:")
+        print(result.query_plan.display_plan())

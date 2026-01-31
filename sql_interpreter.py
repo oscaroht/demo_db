@@ -1,13 +1,26 @@
-from enum import StrEnum, auto
+from enum import StrEnum
+from errors import NamingError, SQLSyntaxError, ValidationError, TableNotFoundError
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, LogicalExpression, Comparison, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp
+from syntax_tree import Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement, BeginStatement, CommitStatement, RollbackStatement, ASTNode
 import re
+
+class qtransaction(StrEnum):
+    BEGIN = 'BEGIN'
+    TRANSACTION = 'TRANSACTION'
+    COMMIT = 'COMMIT'
+    ROLLBACK = 'ROLLBACK'
 
 class qtype(StrEnum):
     SELECT = 'SELECT'
     CREATE = 'CREATE'
     DELETE = 'DELETE'
     INSERT = 'INSERT'
+    DROP = 'DROP'
+
+class qddl(StrEnum):
+    TABLE = 'TABLE'
+    DATABASE = 'DATABASE'
+    SCHEMA = 'SCHEMA'
 
 class qtrans(StrEnum):
     WHERE = 'WHERE'
@@ -29,6 +42,14 @@ class qtrans(StrEnum):
     AS = 'AS'
     JOIN = 'JOIN'
     ON = 'ON'
+    INTO = 'INTO'
+    VALUES = 'VALUES'
+
+class qtypes(StrEnum):
+    INT = 'INT'
+    TEXT = 'TEXT'
+    DATE = 'DATE'
+    DATETIME = 'DATETIME'
 
 class qarithmaticoperators(StrEnum):
     ADD = '+'
@@ -66,11 +87,13 @@ PRECEDENCE = {
     '*': 50, '/': 50, '%': 50
 }
 
-token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
-keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans])
+token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces] + [e.value for e in qtransaction]
+keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans] + [e.value for e in qddl] + [e.value for e in qtypes] + [e.value for e in qtransaction])
 whitespaces_set = set([e.value for e in qwhitespaces])
 
 comparators_arithmatic_symbols = set([e.value for e in qcomparators] + [e.value for e in qarithmaticoperators])
+
+type_set = set([e.value for e in qtypes])
 
 def tokenize(query: str) -> list[str]:
     """The goal is to split the function by whitespace, comma, dot and semicolon."""
@@ -89,7 +112,7 @@ def tokenize(query: str) -> list[str]:
             while char_index < len(query) and not (query[char_index] == "'" and query[char_index-1] != "\\"):  # escape ' is handled this way. -1 is safe because the cursor has advanced by one in prev line
                 char_index += 1
             if char_index == len(query):
-                raise SyntaxError("Unclosed string literal in query.")
+                raise SQLSyntaxError("Unclosed string literal in query.")
 
             literal_token = query[start_quote_index : char_index + 1]
             tokens.append(literal_token)
@@ -139,7 +162,7 @@ class TokenStream:
         if token == expected_token:
             self.advance()
             return token
-        raise SyntaxError(f"Expected '{expected_token}', got '{token}' at token position {self.pos}")
+        raise SQLSyntaxError(f"Expected '{expected_token}', got '{token}' at token position {self.pos}")
     
     def peek(self, offset=1):
         """Looks ahead without advancing."""
@@ -158,12 +181,125 @@ class Parser:
         
         current_token = self.stream.current()
 
+        if current_token in [e.value for e in qtransaction]:
+            return self._parse_transaction_modifier()
+
         if current_token == qtype.SELECT:
             return self._parse_select_statement()
+        if current_token == qtype.CREATE:
+            return self._parse_create_statement()
+        if current_token == qtype.INSERT:
+            return self._parse_insert_statement()
+        if current_token == qtype.DROP:
+            return self._parse_drop_statement()
         # Add elif for CREATE, INSERT, DELETE here later
         
-        raise SyntaxError(f"Unsupported query type: {current_token}")
+        raise SQLSyntaxError(f"Unsupported query type: {current_token}")
 
+    def _parse_transaction_modifier(self) -> ASTNode:
+        token = self.stream.current()
+        if token == 'BEGIN':
+            self.stream.match('BEGIN')
+            if self.stream.current() == 'TRANSACTION':
+                self.stream.advance()
+            return BeginStatement()
+        elif token == 'COMMIT':
+            self.stream.match('COMMIT')
+            return CommitStatement()
+        elif token == 'ROLLBACK':
+            self.stream.match('ROLLBACK')
+            return RollbackStatement()
+
+    def _parse_drop_statement(self) -> DropStatement:
+        self.stream.match(qtype.DROP)
+        self.stream.match(qddl.TABLE)
+        table_name = self.stream.current()
+        if table_name is None:
+            raise SQLSyntaxError('Expected table name. Found nothing.')
+        return DropStatement(table_name)
+
+    def _parse_insert_statement(self):
+        self.stream.match(qtype.INSERT)
+        self.stream.match(qtrans.INTO)
+        table_name = self.stream.current()
+        self.stream.advance()
+
+        names = []
+        if self.stream.current() == '(':
+            names = self._parse_comma_separated_operands()
+
+        current = self.stream.current()
+        if current == qtrans.VALUES:
+            values = self._parse_values(len(names))
+            return InsertStatement(table_name, names, values=values)
+        elif current == qtype.SELECT:
+            select = self._parse_select_statement()
+            return InsertStatement(table_name, names, select=select)
+        else:
+            raise SQLSyntaxError(f"Expected VALUES or SELECT, got {current}")
+
+    def _parse_values(self, num_cols):
+        """Prase the values of an insert statement"""
+        self.stream.match(qtrans.VALUES)
+        values: list[list[Literal]] = [] 
+        while True:
+            row = self._parse_comma_separated_operands()
+            if num_cols != 0 and len(row) != num_cols:
+                raise ValidationError("Number of columns and number of values not equal.")
+            values.append(row)
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        return values
+
+    def _parse_comma_separated_operands(self) -> list[Literal]:
+        """Parse columns or value row as (val1, val2, val3)"""
+        items = []
+        self.stream.match('(')
+        while True:
+            # current = self.stream.current()
+            # if current is None:
+            #     raise Exception(f"Expected literal, got end of query.")
+            # if not self._is_literal(current):
+            #     raise Exception(f"Value {current} in values is not a literal")
+            # literal = self._parse_literal()
+            item = self._parse_operand()
+            items.append(item)
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        self.stream.match(')')
+        return items
+
+
+    def _parse_create_statement(self):
+        self.stream.match(qtype.CREATE)
+        self.stream.match(qddl.TABLE)
+
+        table_name = self.stream.current()
+        self.stream.advance()
+
+        self.stream.match('(')
+
+        names = []
+        types = []
+        while True:
+            column_name = self.stream.current()
+            if column_name in keywords_set:
+                raise NamingError(f"Table name cannot be a keyword.")
+            self.stream.advance()
+            column_type = self.stream.current()
+            if column_type not in type_set:
+                raise ValidationError(f"Unknown type {column_type}. Expected type, got {column_type}")
+            self.stream.advance()
+            names.append(column_name)
+            types.append(column_type)
+            if self.stream.current() != qseparators.COMMA:
+                break
+            self.stream.match(qseparators.COMMA)
+        self.stream.match(')')
+        return CreateStatement(table_name, names, types)
+            
 
     def _parse_select_statement(self):
         """
@@ -239,8 +375,7 @@ class Parser:
             right = self._parse_table_ref()
 
             self.stream.match(qtrans.ON)
-            condition = self._parse_logical_expression()
-
+            condition = self._parse_expression(0)
             left = Join(left, right, condition)
 
         return left
@@ -290,7 +425,7 @@ class Parser:
         limit_operand = self._parse_operand()
         
         if not isinstance(limit_operand, Literal):
-             raise SyntaxError("LIMIT must be followed by a numeric literal.")
+             raise SQLSyntaxError("LIMIT must be followed by a numeric literal.")
                 
         return LimitClause(limit_operand.value)    
 
@@ -362,59 +497,12 @@ class Parser:
             self.stream.match(')')
             return AggregateCall(function_name, aggcol, is_distinct=is_distinct)
 
-        # Handle Literals and Columns (Using your existing logic)
-        if token.startswith("'") or token.isdigit() or '.' in token or token.replace('.','',1).isdigit():
-            return self._parse_operand()
+        return self._parse_operand()  # handle lliteral and column ref
+    
 
-        return ColumnRef(*self._parse_column_identifier())
-        
-    def _parse_expression_old(self) -> Expression:
-        """
-        Parses a single column or aggregate function call.
-        (e.g., id, name, COUNT(*), MAX(price), name as first_name)
-        """
-        
-        current = self.stream.current()
-        if current is None:
-            raise SyntaxError(f"Expected expression (column ref, function call, literal) found end of tokens.")
+    def _is_literal(self, token: str) -> bool:
+        return token.startswith("'") or token.isdigit() or re.match(r'\d*[.]\d+', token)
 
-        if current == '*':
-            self.stream.advance()
-            return Star()
-        
-        # Check for aggregate functions
-        if current in ['COUNT', 'MIN', 'MAX', 'AVG', 'SUM']:
-            function_name = self.stream.match(current)
-            self.stream.match('(')
-            is_distinct = False 
-            # Check for COUNT(DISTINCT ..)
-            if current == qtrans.COUNT and self.stream.current() == qtrans.DISTINCT:
-                is_distinct = True
-                self.stream.advance()
-            # Check for COUNT(*)
-            if self.stream.current() == '*':
-                argument = self.stream.match('*')
-                aggcol = Star()
-            else:
-                argument = self._parse_column_identifier() # Column inside the aggregate
-                aggcol = ColumnRef(*argument)
-            
-            self.stream.match(')')
-            aggcall = AggregateCall(function_name, aggcol, is_distinct=is_distinct)
-            aggcall.alias = self._parse_alias()
-            return aggcall
-        
-        if current.startswith("'") and current.endswith("'") or current.isdigit():
-            col = self._parse_literal()
-            col.alias = self._parse_alias()
-            return col
-        if current == '(' or self.stream.peek() in comparators_arithmatic_symbols:
-            col = self._parse_comparison()
-            col.alias = self._parse_alias()
-        table, col_name = self._parse_column_identifier()
-        col = ColumnRef(table, col_name)
-        col.alias = self._parse_alias()
-        return col
 
     def _parse_alias(self) -> None | str:
         if self.stream.current() == 'AS':
@@ -427,7 +515,7 @@ class Parser:
         """Parse a table name."""
         token = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected an identifier, got end of stream.")
+            raise SQLSyntaxError("Expected an identifier, got end of stream.")
         self.stream.advance()
         return token
 
@@ -435,13 +523,13 @@ class Parser:
         """Parse a table name or column name."""
         token = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected an identifier, got end of stream.")
+            raise SQLSyntaxError("Expected an identifier, got end of stream.")
         table = None
         column = token
         if '.' in token:
             parts: List[str] = token.split('.')
             if len(parts) > 2:
-                raise SyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
+                raise SQLSyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
             table, column = parts[0], parts[1]
         
         self.stream.advance()
@@ -450,68 +538,16 @@ class Parser:
     def _parse_literal(self) -> Literal:
         token: None | str = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected literal value not end of query")
-        value: str | int = token
-        if token.isdigit():
+            raise SQLSyntaxError("Expected literal value not end of query")
+        value: str | int | float = token
+        if token.startswith("'") and token.endswith("'"):
+            value = str(token.strip("'").replace(r"\'", "'"))
+        elif token.isdigit():
             value = int(token)
-        else:
-            value = token[1:-1]  # strip ' and '
+        elif re.match(r'\d*[.]\d+', token):
+            value = float(token)
         self.stream.advance()
         return Literal(value)
-
-    def _parse_logical_expression(self) -> Comparison | LogicalExpression:
-        """
-        Handles OR conditions (Lowest Precedence).
-        <LogicalExpression> -> <AndExpression> ( OR <AndExpression> )*
-        """
-        left_node = self._parse_and_expression()
-
-        while self.stream.current() == qtrans.OR:
-            op = self.stream.match(qtrans.OR)
-            right_node = self._parse_and_expression()
-            left_node = LogicalExpression(op, left_node, right_node)
-            
-        return left_node
-
-    def _parse_and_expression(self) -> Comparison | LogicalExpression:
-        """
-        Handles AND conditions (Higher Precedence).
-        <AndExpression> -> <Comparison> ( AND <Comparison> )*
-        """
-        left_node = self._parse_comparison()
-
-        while self.stream.current() == qtrans.AND:
-            op = self.stream.match(qtrans.AND)
-            right_node = self._parse_comparison()
-            left_node = LogicalExpression(op, left_node, right_node)
-        return left_node
-
-    def _parse_comparison(self) -> Comparison | LogicalExpression:
-        """
-        Handles simple comparisons or parenthesized expressions.
-        <Comparison> -> <Operand> <Operator> <Operand> | ( <LogicalExpression> )
-        """
-        
-        current = self.stream.current()
-        
-        if current == '(':
-            self.stream.match('(')
-            node = self._parse_logical_expression() # Recurse back to the highest precedence
-            self.stream.match(')')
-            return node
-        
-        left_operand = self._parse_operand()
-        
-        # Check for comparison operator
-        comparison_op = self.stream.current()
-        if comparison_op in comparators_arithmatic_symbols:
-            self.stream.advance()
-            right_operand = self._parse_operand()
-            return Comparison(comparison_op, left_operand, right_operand)
-
-        # If it wasn't a comparison and not parentheses, it's an error
-        raise SyntaxError(f"Expected comparison operator or '(' at: {current}")
-
 
     def _parse_operand(self) -> ColumnRef | Literal:
         """
@@ -520,23 +556,10 @@ class Parser:
         token = self.stream.current()
 
         if token is None:
-            raise SyntaxError("Expected an operand, got end of stream.")
-
-        # 1. String Literal Check (The fix from last time, now robust!)
-        if token.startswith("'") and token.endswith("'"):
-            self.stream.advance()
-            # Pass the stripped value as a Literal
-            return Literal(token.strip("'").replace(r"\'", "'") )
-
-        if token.isdigit():
-            self.stream.advance()
-            return Literal(int(token))
-
-        if re.match(r'\d*[.]\d+', token):
-            # Simple conversion to Literal node
-            self.stream.advance()
-            # Try to cast to integer or float
-            return Literal(float(token))
+            raise SQLSyntaxError("Expected an operand, got end of stream.")
         
+        # Check if it is a literal
+        if self._is_literal(token):
+            return self._parse_literal()
         # Otherwise, assume it's a Column Reference (identifier)
         return ColumnRef(*self._parse_column_identifier())

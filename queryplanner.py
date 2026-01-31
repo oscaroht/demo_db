@@ -1,13 +1,20 @@
+from dataclasses import dataclass
+from enum import StrEnum, auto
 from typing import List, Callable
 import operator
+from buffermanager import BufferManager
 from syntax_tree import (
-    ASTNode, BinaryOp, SelectStatement,
-    TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal) 
+    ASTNode, BinaryOp, DropStatement, InsertStatement, SelectStatement,
+    TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
+    CreateStatement, BeginStatement, CommitStatement, RollbackStatement) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
-    Distinct, NestedLoopJoin, AggregateSpec, Operator
+    Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert
 )
-from catalog import Catalog
+from catalog import Catalog, Table, Page
 from schema import ColumnIdentifier, Schema
+from datetime import date, datetime
+
+from transaction import Transaction
 
 OPERATOR_MAP = {
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
@@ -17,17 +24,79 @@ OPERATOR_MAP = {
     'OR':  lambda x, y: bool(x) or bool(y),
 }
 
+TYPE_MAP = {
+    'TEXT': str,
+    'INT': int,
+    'DATE': date,
+    'DATETIME': datetime
+}
+
+class Status(StrEnum):
+    SUCCESS = auto()
+
 class QueryPlanner:
-    def __init__(self, catalog: Catalog, buffer_manager):
-        self.catalog = catalog
-        self.buffer_manager = buffer_manager
+    def __init__(self, transaction: Transaction):
+        # self.catalog = catalog
+        self.transaction = transaction
 
-    def plan_query(self, ast_root: ASTNode):
-        if not isinstance(ast_root, SelectStatement):
-            raise TypeError(f"Unsupported AST root: {type(ast_root)}")
-        return self._plan_select(ast_root)
+    def plan_query(self, ast_root: ASTNode) -> Operator:
+        if isinstance(ast_root, SelectStatement):
+            return self._plan_select(ast_root)
+        if isinstance(ast_root, CreateStatement):
+            return self._plan_create(ast_root)
+        if isinstance(ast_root, InsertStatement):
+            return self._plan_insert(ast_root)
+        if isinstance(ast_root, DropStatement):
+            return self._plan_drop(ast_root)
 
-    def _plan_select(self, stmt: SelectStatement):
+
+    def _plan_commit(self, node: CommitStatement):
+        self.transaction.commit()
+        return StatusOperator("Success")
+
+    def _plan_drop(self, node: DropStatement):
+        self.transaction.drop_table_by_name(node.table_name)
+        return StatusOperator("Success")
+    
+    def _plan_create(self, node: CreateStatement):
+        native_types = [  TYPE_MAP[typ] for typ in node.column_types  ]
+        table = Table(node.table_name, node.column_names, native_types)
+        self.transaction.add_new_table(table)
+        return StatusOperator('SUCCESS')
+
+    def _plan_insert(self, node: InsertStatement):
+        table = self.transaction.get_table_by_name(node.table_name)
+        shadow_table = self.transaction.get_or_create_shadow_table(table)
+        for col in node.columns:
+            if col.name not in shadow_table.column_names:
+                raise Exception(f"Column {col.name} not in table {node.table_name}.")
+
+        val_map = {col.name: i for i, col in enumerate(node.columns)}
+        
+        column_indices = []
+        column_types = []
+        for tab_col, col_type in zip(shadow_table.column_names, shadow_table.column_datatypes):
+            if tab_col in val_map:
+                column_indices.append(val_map[tab_col])
+                column_types.append(col_type)
+            else:
+                column_indices.append(None)
+                column_types.append(None)
+
+        if node.columns == []:
+            # use all column
+            column_indices = range(0, len(table.column_names))
+            column_types = table.column_datatypes
+
+        if node.values:
+            gen = lambda : (row for row in node.values)
+        else:
+            gen = self._plan_select(node.select).next
+
+        return Insert(shadow_table, gen, column_indices, self.transaction)
+
+
+    def _plan_select(self, stmt: SelectStatement) -> Operator:
         # 1. FROM & JOIN
         plan = self._plan_from(stmt.from_clause)
 
@@ -91,12 +160,15 @@ class QueryPlanner:
         if isinstance(node, TableRef):
             table_name = node.name
             alias = node.alias or node.name
-            cols: List[str] = self.catalog.get_all_column_names(table_name)
+            table: Table = self.transaction.get_table_by_name(table_name)
+            cols: list[str] = table.column_names
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])
+            # pages = self.transaction.get_pages(pages)
+            gen = self.transaction.get_page_generator_from_table_by_name(table_name)
             return ScanOperator(
-                table_name=table_name,
-                data_generator=self.buffer_manager.get_data_generator(table_name),
+                table_display_name=table_name,
+                page_generator=gen,
                 schema=schema
             )
 

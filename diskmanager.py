@@ -1,32 +1,28 @@
-
-from typing import List
-
-from metaclasses import Page, PageInfo, Row
-
+import os
+from config import PAGE_SIZE
+from catalog import Catalog, Page
 
 class DiskManager:
-    def __init__(self, disk_path: str):
-        self.disk_path = disk_path
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        # Create file if it doesn't exist
+        if not os.path.exists(db_path):
+            catalog = Catalog.get_empty_catalog()
+            page = catalog.to_page()
+            with open(db_path, 'wb') as f:
+                f.write(page.to_bytes())
+
+    def read_page(self, page_id: int) -> Page:
+        offset = page_id * PAGE_SIZE
+        with open(self.db_path, 'rb') as f:
+            f.seek(offset)
+            return Page.from_bytes(page_id, f.read(PAGE_SIZE))
 
     def write_page(self, page: Page):
-        # Logic to write the page to disk
-        pass
-
-    def read_page(self, page_info: PageInfo) -> Page:
-        with open(self.disk_path, 'r') as f:  # opening and closing in the init??
-            f.seek(page_info.page_offset)
-            content = f.read(page_info.page_size)
-        # content = content.decode('utf-8')
-        rows = content.split('\n')
-        if rows[-1] == '':  # in linux final line is read as an empty string
-            rows = rows[:-1]
-        row_collection: List[Row] = []
-        for row in rows:
-            str_values = row.split(',')
-            if len(str_values) != len(page_info.table_info.column_names):
-                raise ValueError(f"Row has {len(str_values)} columns and does not match table schema with {len(page_info.table_info.column_names)} columns")
-            row = Row([dt(v) for v, dt in zip(str_values, page_info.table_info.column_datatypes)])
-                # Convert values to the appropriate datatype
-                # row.append(dt(v))
-            row_collection.append(row)
-        return Page(page_info, row_collection)
+        data = page.to_bytes()
+        if len(data) != PAGE_SIZE:
+            raise ValueError("Data must be exactly PAGE_SIZE")
+        offset = page.page_id * PAGE_SIZE
+        with open(self.db_path, 'r+b') as f:
+            f.seek(offset)
+            f.write(data)
