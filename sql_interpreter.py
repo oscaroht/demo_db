@@ -1,7 +1,14 @@
-from enum import StrEnum, auto
+from enum import StrEnum
+from errors import NamingError, SQLSyntaxError, ValidationError, TableNotFoundError
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement
+from syntax_tree import Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement, BeginStatement, CommitStatement, RollbackStatement, ASTNode
 import re
+
+class qtransaction(StrEnum):
+    BEGIN = 'BEGIN'
+    TRANSACTION = 'TRANSACTION'
+    COMMIT = 'COMMIT'
+    ROLLBACK = 'ROLLBACK'
 
 class qtype(StrEnum):
     SELECT = 'SELECT'
@@ -80,8 +87,8 @@ PRECEDENCE = {
     '*': 50, '/': 50, '%': 50
 }
 
-token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces]
-keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans] + [e.value for e in qddl] + [e.value for e in qtypes])
+token_separators = [e.value for e in qarithmaticoperators] + [e.value for e in qseparators] + [e.value for e in qcomparators] + [e.value for e in qwhitespaces] + [e.value for e in qtransaction]
+keywords_set = set([e.value for e in qtype] + [e.value for e in qtrans] + [e.value for e in qddl] + [e.value for e in qtypes] + [e.value for e in qtransaction])
 whitespaces_set = set([e.value for e in qwhitespaces])
 
 comparators_arithmatic_symbols = set([e.value for e in qcomparators] + [e.value for e in qarithmaticoperators])
@@ -105,7 +112,7 @@ def tokenize(query: str) -> list[str]:
             while char_index < len(query) and not (query[char_index] == "'" and query[char_index-1] != "\\"):  # escape ' is handled this way. -1 is safe because the cursor has advanced by one in prev line
                 char_index += 1
             if char_index == len(query):
-                raise SyntaxError("Unclosed string literal in query.")
+                raise SQLSyntaxError("Unclosed string literal in query.")
 
             literal_token = query[start_quote_index : char_index + 1]
             tokens.append(literal_token)
@@ -155,7 +162,7 @@ class TokenStream:
         if token == expected_token:
             self.advance()
             return token
-        raise SyntaxError(f"Expected '{expected_token}', got '{token}' at token position {self.pos}")
+        raise SQLSyntaxError(f"Expected '{expected_token}', got '{token}' at token position {self.pos}")
     
     def peek(self, offset=1):
         """Looks ahead without advancing."""
@@ -174,6 +181,9 @@ class Parser:
         
         current_token = self.stream.current()
 
+        if current_token in [e.value for e in qtransaction]:
+            return self._parse_transaction_modifier()
+
         if current_token == qtype.SELECT:
             return self._parse_select_statement()
         if current_token == qtype.CREATE:
@@ -184,14 +194,28 @@ class Parser:
             return self._parse_drop_statement()
         # Add elif for CREATE, INSERT, DELETE here later
         
-        raise SyntaxError(f"Unsupported query type: {current_token}")
+        raise SQLSyntaxError(f"Unsupported query type: {current_token}")
 
-    def _parse_drop_statement(self):
+    def _parse_transaction_modifier(self) -> ASTNode:
+        token = self.stream.current()
+        if token == 'BEGIN':
+            self.stream.match('BEGIN')
+            if self.stream.current() == 'TRANSACTION':
+                self.stream.advance()
+            return BeginStatement()
+        elif token == 'COMMIT':
+            self.stream.match('COMMIT')
+            return CommitStatement()
+        elif token == 'ROLLBACK':
+            self.stream.match('ROLLBACK')
+            return RollbackStatement()
+
+    def _parse_drop_statement(self) -> DropStatement:
         self.stream.match(qtype.DROP)
         self.stream.match(qddl.TABLE)
         table_name = self.stream.current()
         if table_name is None:
-            raise Exception('Expected table name. Found nothing.')
+            raise SQLSyntaxError('Expected table name. Found nothing.')
         return DropStatement(table_name)
 
     def _parse_insert_statement(self):
@@ -212,7 +236,7 @@ class Parser:
             select = self._parse_select_statement()
             return InsertStatement(table_name, names, select=select)
         else:
-            raise Exception(f"Expected VALUES or SELECT, got {current}")
+            raise SQLSyntaxError(f"Expected VALUES or SELECT, got {current}")
 
     def _parse_values(self, num_cols):
         """Prase the values of an insert statement"""
@@ -221,7 +245,7 @@ class Parser:
         while True:
             row = self._parse_comma_separated_operands()
             if num_cols != 0 and len(row) != num_cols:
-                raise Exception("Number of columns and number of values not equal.")
+                raise ValidationError("Number of columns and number of values not equal.")
             values.append(row)
             if self.stream.current() != qseparators.COMMA:
                 break
@@ -262,11 +286,11 @@ class Parser:
         while True:
             column_name = self.stream.current()
             if column_name in keywords_set:
-                raise Exception(f"Table name cannot be a keyword.")
+                raise NamingError(f"Table name cannot be a keyword.")
             self.stream.advance()
             column_type = self.stream.current()
             if column_type not in type_set:
-                raise Exception(f"Unknown type {column_type}. Expected type, got {column_type}")
+                raise ValidationError(f"Unknown type {column_type}. Expected type, got {column_type}")
             self.stream.advance()
             names.append(column_name)
             types.append(column_type)
@@ -401,7 +425,7 @@ class Parser:
         limit_operand = self._parse_operand()
         
         if not isinstance(limit_operand, Literal):
-             raise SyntaxError("LIMIT must be followed by a numeric literal.")
+             raise SQLSyntaxError("LIMIT must be followed by a numeric literal.")
                 
         return LimitClause(limit_operand.value)    
 
@@ -491,7 +515,7 @@ class Parser:
         """Parse a table name."""
         token = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected an identifier, got end of stream.")
+            raise SQLSyntaxError("Expected an identifier, got end of stream.")
         self.stream.advance()
         return token
 
@@ -499,13 +523,13 @@ class Parser:
         """Parse a table name or column name."""
         token = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected an identifier, got end of stream.")
+            raise SQLSyntaxError("Expected an identifier, got end of stream.")
         table = None
         column = token
         if '.' in token:
             parts: List[str] = token.split('.')
             if len(parts) > 2:
-                raise SyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
+                raise SQLSyntaxError(f"Identifier {token} has multiple '.'. Expected table.column")
             table, column = parts[0], parts[1]
         
         self.stream.advance()
@@ -514,7 +538,7 @@ class Parser:
     def _parse_literal(self) -> Literal:
         token: None | str = self.stream.current()
         if token is None:
-            raise SyntaxError("Expected literal value not end of query")
+            raise SQLSyntaxError("Expected literal value not end of query")
         value: str | int | float = token
         if token.startswith("'") and token.endswith("'"):
             value = str(token.strip("'").replace(r"\'", "'"))
@@ -532,7 +556,7 @@ class Parser:
         token = self.stream.current()
 
         if token is None:
-            raise SyntaxError("Expected an operand, got end of stream.")
+            raise SQLSyntaxError("Expected an operand, got end of stream.")
         
         # Check if it is a literal
         if self._is_literal(token):

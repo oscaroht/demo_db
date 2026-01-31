@@ -8,6 +8,5 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "prompt-toolkit>=3.0.52",
     "pytest>=9.0.2",
 ]

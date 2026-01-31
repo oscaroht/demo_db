@@ -29,13 +29,14 @@ mock_schema = {
 table1 = Table('employee', ['id', 'name', 'age', 'city', 'salary'], [int, str, int, str, float], [1] )
 table2 = Table('contract', ['id', 'employee_id', 'start_date', 'end_date'], [int, str, str, str], [2])
 
-BOOTSTRAP = False
-
 diskmanager = DiskManager('.db')
 buffermanager = BufferManager(diskmanager, 10)
 
 catalog_page = buffermanager.get_page(0)
 catalog = Catalog.from_page(catalog_page)
+
+BOOTSTRAP = False  # fills the database with dummy data
+
 if BOOTSTRAP:
     catalog = Catalog([table1, table2])
     rows = table_data['employee']
@@ -43,11 +44,7 @@ if BOOTSTRAP:
     rows = table_data['contract']
     buffermanager.put(Page(2, rows, is_dirty=True))
 
-print(buffermanager.buffer)
-print(catalog)
-
 engine = DatabaseEngine(catalog, buffermanager)
-print(engine.catalog.tables)
 repl(engine)
 diskmanager.write_page(catalog.to_page())
 buffermanager.flush()

@@ -6,7 +6,7 @@ from buffermanager import BufferManager
 from syntax_tree import (
     ASTNode, BinaryOp, DropStatement, InsertStatement, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
-    CreateStatement) 
+    CreateStatement, BeginStatement, CommitStatement, RollbackStatement) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
     Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert
 )
@@ -48,6 +48,11 @@ class QueryPlanner:
             return self._plan_insert(ast_root)
         if isinstance(ast_root, DropStatement):
             return self._plan_drop(ast_root)
+
+
+    def _plan_commit(self, node: CommitStatement):
+        self.transaction.commit()
+        return StatusOperator("Success")
 
     def _plan_drop(self, node: DropStatement):
         self.transaction.drop_table_by_name(node.table_name)
@@ -156,7 +161,6 @@ class QueryPlanner:
             table_name = node.name
             alias = node.alias or node.name
             table: Table = self.transaction.get_table_by_name(table_name)
-            print(table)
             cols: list[str] = table.column_names
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])

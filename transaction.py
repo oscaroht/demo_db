@@ -110,7 +110,6 @@ class Transaction:
         # put in buffer so it can spill to disk if memory is tight
         self.buffer_manager.put(new_page)
         # register new page_id
-        print(f"append {new_pid}")
         shadow_table.page_id.append(new_pid)
         return new_page
 

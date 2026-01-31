@@ -161,3 +161,8 @@ class InsertStatement(ASTNode):
 class DropStatement(ASTNode):
     def __init__(self, table_name: str) -> None:
         self.table_name = table_name
+
+class TransactionModifier(ASTNode): pass
+class BeginStatement(TransactionModifier): pass
+class CommitStatement(TransactionModifier): pass
+class RollbackStatement(TransactionModifier): pass
