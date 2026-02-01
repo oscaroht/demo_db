@@ -57,7 +57,6 @@ class Transaction:
     def _swap_page_id(self, table: ShadowTable, old_page_id: int, new_page_id: int):
         idx = table.page_id.index(old_page_id)
         table.page_id[idx] = new_page_id
-        print(f"pids: {table.page_id}")
 
 
     def _get_free_page_id(self) -> int:

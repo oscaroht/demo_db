@@ -127,7 +127,7 @@ def from_shadow_table(shadow_table: ShadowTable):
 
 class Catalog:
     """Mock database schema information."""
-    def __init__(self, tables: Iterable[Table]):
+    def __init__(self, tables: list[Table]):
         self.tables = {table.table_name: table for table in tables}
         sorted_page_ids = sorted([id for table in tables for id in table.page_id])
         self.free_page_ids = self._find_free_pages(sorted_page_ids)
@@ -159,9 +159,6 @@ class Catalog:
         table = self.get_table_by_name(name)
         self.free_page_ids += table.page_id  # take the table's pages and add them to the free list for reassignment later
         del self.tables[table.table_name]  # remove from dict
-
-    def get_all_page_ids(self, table_name) -> Iterable[int]:
-        return self.tables[table_name.lower()].page_id
 
     def get_free_page_id(self, transaction_id: int) -> int:
         if self.free_page_ids:
