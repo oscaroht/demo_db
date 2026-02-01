@@ -135,7 +135,7 @@ class Catalog:
         self.borrowed_page_ids = {}  # tranaction_id: page_id
 
     def _find_free_pages(self, sorted_page_ids: list[int]):
-        """Two pointer alogrithm to find gaps in array"""
+        """Two pointer algorithm to find gaps in array"""
         free_page_ids = []
         i = 1
         j = 0
