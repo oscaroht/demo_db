@@ -125,7 +125,7 @@ class Delete(Operator):
         current_pid = None
         drop_list = []
         shadow_page: None | ShadowPage = None
-        for row, pid, idx in self.parent.next():
+        for _, pid, idx in self.parent.next():
             if pid != current_pid:
                 if shadow_page and drop_list:
                     shadow_page.delete_rows(drop_list)
@@ -134,7 +134,8 @@ class Delete(Operator):
                 current_pid = pid
             drop_list.append(idx)
             row_count += 1
-        shadow_page.delete_rows(drop_list)
+        if shadow_page:
+            shadow_page.delete_rows(drop_list)
 
         yield tuple([f'Deleted {row_count} rows']), None, None
 
