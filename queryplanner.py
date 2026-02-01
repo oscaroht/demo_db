@@ -1,19 +1,21 @@
+from ast import Delete
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from typing import List, Callable
 import operator
 from buffermanager import BufferManager
 from syntax_tree import (
-    ASTNode, BinaryOp, DropStatement, InsertStatement, SelectStatement,
+    ASTNode, BinaryOp, DeleteStatement, DropStatement, InsertStatement, SelectStatement,
     TableRef, AggregateCall, Join, Expression, Star, ColumnRef, Literal,
     CreateStatement, BeginStatement, CommitStatement, RollbackStatement) 
 from operators import ( Filter, ScanOperator, Projection, Sorter, Limit, Aggregate,
-    Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert
+    Distinct, NestedLoopJoin, AggregateSpec, Operator, StatusOperator, Insert, Delete
 )
-from catalog import Catalog, Table, Page
+from catalog import Catalog, ShadowTable, Table, Page
 from schema import ColumnIdentifier, Schema
 from datetime import date, datetime
 
+from tests.test_transaction import transaction
 from transaction import Transaction
 
 OPERATOR_MAP = {
@@ -48,6 +50,22 @@ class QueryPlanner:
             return self._plan_insert(ast_root)
         if isinstance(ast_root, DropStatement):
             return self._plan_drop(ast_root)
+        if isinstance(ast_root, DeleteStatement):
+            return self._plan_delete(ast_root)
+
+    def _plan_delete(self, stmt: DeleteStatement):
+        # 1. FROM
+        plan = self._plan_from(stmt.from_clause)
+
+        # 2. WHERE
+        if stmt.where_clause:
+            input_schema = plan.get_output_schema()
+            predicate_fn = self._compile_expression(stmt.where_clause, input_schema)
+            plan = Filter(predicate_fn, plan)
+
+        table = self.transaction.get_table_by_name(stmt.from_clause.name)
+        shadow_table = self.transaction.get_or_create_shadow_table(table)
+        return Delete(shadow_table, self.transaction, plan)
 
 
     def _plan_commit(self, node: CommitStatement):
@@ -160,7 +178,7 @@ class QueryPlanner:
         if isinstance(node, TableRef):
             table_name = node.name
             alias = node.alias or node.name
-            table: Table = self.transaction.get_table_by_name(table_name)
+            table: ShadowTable | Table = self.transaction.get_table_by_name(table_name)
             cols: list[str] = table.column_names
             
             schema = Schema([ColumnIdentifier(name=c, qualifier=alias) for c in cols])
@@ -169,7 +187,7 @@ class QueryPlanner:
             return ScanOperator(
                 table_display_name=table_name,
                 page_generator=gen,
-                schema=schema
+                schema=schema,
             )
 
         if isinstance(node, Join):

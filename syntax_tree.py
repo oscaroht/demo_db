@@ -159,8 +159,13 @@ class InsertStatement(ASTNode):
         self.select: None | SelectStatement = select
 
 class DropStatement(ASTNode):
-    def __init__(self, table_name: str) -> None:
+    def __init__(self, table_name: str):
         self.table_name = table_name
+
+class DeleteStatement(ASTNode):
+    def __init__(self, from_clause: TableRef, where_clause: None | Expression = None):
+        self.from_clause = from_clause
+        self.where_clause = where_clause
 
 class TransactionModifier(ASTNode): pass
 class BeginStatement(TransactionModifier): pass

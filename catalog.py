@@ -83,6 +83,11 @@ class ShadowPage(BasePage):
             return True
         return False
 
+    def delete_rows(self, indices_to_remove: list[int]):
+        """Use reversed order sort to remove from end to begin"""
+        for index in sorted(indices_to_remove, reverse=True):
+            del self.data[index]
+
 class Page(BasePage):
     """Immutable page"""
     def __init__(self, page_id, data: tuple[Row, ...], header=None, is_dirty=True):  # data is list[Row] or Catalog

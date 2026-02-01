@@ -81,7 +81,7 @@ class DatabaseEngine:
             planner = QueryPlanner(transaction)
             query_plan_root: Operator = planner.plan_query(ast_root)
 
-            rows = list(query_plan_root.next())
+            rows = [row for row, _ ,_ in query_plan_root.next()]
 
             schema: Schema = query_plan_root.get_output_schema()
             column_names: List[str] = schema.get_names()

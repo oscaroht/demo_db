@@ -1,7 +1,7 @@
 from enum import StrEnum
 from errors import NamingError, SQLSyntaxError, ValidationError, TableNotFoundError
 from typing import Tuple, List
-from syntax_tree import Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement, BeginStatement, CommitStatement, RollbackStatement, ASTNode
+from syntax_tree import DeleteStatement, Expression, SelectStatement, Literal, ColumnRef, AggregateCall, SortItem, OrderByClause, GroupByClause, LimitClause, Join, TableRef, Star, BinaryOp, CreateStatement, InsertStatement, DropStatement, BeginStatement, CommitStatement, RollbackStatement, ASTNode
 import re
 
 class qtransaction(StrEnum):
@@ -192,12 +192,29 @@ class Parser:
             return self._parse_insert_statement()
         if current_token == qtype.DROP:
             return self._parse_drop_statement()
-        # Add elif for CREATE, INSERT, DELETE here later
+        if current_token == qtype.DELETE:
+            return self._parse_delete_statement()
         
         raise SQLSyntaxError(f"Unsupported query type: {current_token}")
 
-    def _parse_transaction_modifier(self) -> ASTNode:
+
+    def _parse_delete_statement(self) -> DeleteStatement:
+        self.stream.match(qtype.DELETE)
+        
+        from_clause = self._parse_from_clause()
+        if isinstance(from_clause, Join):
+            raise SQLSyntaxError(f"Join not possible with delete")
+
+        where_clause = None
+        if self.stream.current() == qtrans.WHERE:
+            self.stream.match(qtrans.WHERE)
+            where_clause = self._parse_expression(0)
+        return DeleteStatement(from_clause=from_clause, where_clause=where_clause)
+
+    def _parse_transaction_modifier(self) -> ASTNode | None:
         token = self.stream.current()
+        if token is None:
+            raise SQLSyntaxError("Expected transaction modifier, not end of query.")
         if token == 'BEGIN':
             self.stream.match('BEGIN')
             if self.stream.current() == 'TRANSACTION':

@@ -2,10 +2,11 @@ import abc
 from typing import Callable, Generator, List, Any, Literal, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
-from catalog import ShadowTable, Table, Catalog, Page
+from catalog import ShadowPage, ShadowTable, Table, Catalog, Page
 from syntax_tree import Literal
 
 from schema import ColumnIdentifier, Schema
+from tests.test_transaction import transaction
 from transaction import Transaction
 Row = tuple[Any, ...]
 
@@ -36,7 +37,7 @@ class StatusOperator(Operator):
     def __init__(self, status: str) -> None:
         self.status = status
     def next(self):
-        yield tuple([self.status])
+        yield tuple([self.status]), None, None
     def display_plan(self, level: int = 0) -> str:
         pass
     def get_output_schema(self) -> Schema:
@@ -51,8 +52,15 @@ class ScanOperator(Operator):
         
     def next(self):
         for page in self.gen:
-            for row in page.data:
-                yield row
+            for idx, row in enumerate(page.data):
+                yield row, page.page_id, idx 
+
+    # def next(self):
+    #     for page_id in self.transaction.get_table_by_name(self.table_name).page_id:
+    #         page = self.transaction.buffer_manager.get_page(page_id)
+    #         for idx, row in enumerate(page.data):
+    #             # Critical: Yield location info (page_id, idx) alongside data
+    #             yield row, page_id, idx
 
     def get_output_schema(self) -> Schema:
         return self.schema
@@ -72,14 +80,16 @@ class Insert(Operator):
     def next(self):
         for raw_val_tuple in self.data_generator():
             new_row = self._prepare_row(raw_val_tuple)
-            page = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
+            page: Page | ShadowPage = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
+            if isinstance(page, Page):
+                raise Exception("Page object not writable")
             page_is_full = not page.add_row(new_row)
             if page_is_full:
                 page = self.transaction.get_new_page(self.shadow_table)
                 page_is_full = not page.add_row(new_row)
                 if page_is_full:
                     raise Exception("Page size is to small for even 1 row!")
-        yield(tuple(['SUCCESS']))
+        yield(tuple(['SUCCESS']), None, None)
 
 
     def _prepare_row(self, raw_val_tuple) -> Row:
@@ -103,7 +113,40 @@ class Insert(Operator):
         return Schema([ColumnIdentifier('status')])
 
 
+class Delete(Operator):
+    def __init__(self, shadow_table, transaction: Transaction, parent: Operator):
+        self.shadow_table = shadow_table
+        self.parent = parent
+        self.transaction = transaction
+        self.drop_dict = {}
 
+    def next(self):
+        row_count = 0
+        current_pid = None
+        drop_list = []
+        shadow_page: None | ShadowPage = None
+        for row, pid, idx in self.parent.next():
+            if pid != current_pid:
+                if shadow_page and drop_list:
+                    shadow_page.delete_rows(drop_list)
+                shadow_page = self.transaction.copy_on_write(self.shadow_table, pid)
+                drop_list = []
+                current_pid = pid
+            drop_list.append(idx)
+            row_count += 1
+        shadow_page.delete_rows(drop_list)
+
+        yield tuple([f'Deleted {row_count} rows']), None, None
+
+    def get_output_schema(self) -> Schema:
+        return Schema([ColumnIdentifier('status')])
+
+    def display_plan(self, level: int = 0) -> str:
+        indent = '  ' * level
+        output = [f"{indent}* Delete"]
+        output.append(self.parent.display_plan(level + 1))
+        return '\n'.join(output)
+            
 
 class Filter(Operator):
     def __init__(self, predicate: Callable, parent: Operator):
@@ -111,9 +154,9 @@ class Filter(Operator):
         self.parent = parent
 
     def next(self):
-        for row in self.parent.next():
+        for row, pid, idx in self.parent.next():
             if self.predicate(row):
-                yield row
+                yield row, pid, idx
 
     def get_output_schema(self) -> Schema:
         return self.parent.get_output_schema()
@@ -131,8 +174,8 @@ class Projection(Operator):
         self.extractors = extractors
 
     def next(self):
-        for row in self.parent.next():
-            yield tuple(extractor(row) for extractor in self.extractors)
+        for row, pid, idx in self.parent.next():
+            yield tuple(extractor(row) for extractor in self.extractors), pid, idx
     
     def get_output_schema(self) -> Schema:
         return self.output_schema
@@ -186,11 +229,11 @@ class Distinct(Operator):
 
     def next(self) -> Generator[Row, None, None]:
         self.unique_keys = set()
-        for row in self.parent.next():
+        for row, pid, idx in self.parent.next():
             key = tuple(ext(row) for ext in self.extractors)
             if key not in self.unique_keys:
                 self.unique_keys.add(key)
-                yield row
+                yield row, pid, idx
             
     def get_output_schema(self) -> Schema:
         return self.parent.get_output_schema()
@@ -208,9 +251,9 @@ class Limit(Operator):
         
     def next(self):
         yielded = 0
-        for row in self.parent.next():
+        for row, pid, idx in self.parent.next():
             if yielded < self.count:
-                yield row
+                yield row, pid, idx
                 yielded += 1
             else:
                 break
@@ -284,7 +327,7 @@ class Aggregate(Operator):
 
     def next(self):
         grouped_states = {}
-        for row in self.parent.next():
+        for row, _, _ in self.parent.next():
             # Calculate group key using extractors
             group_key = tuple(extractor(row) for extractor in self.group_extractors)
             
@@ -301,7 +344,7 @@ class Aggregate(Operator):
                 grouped_states[group_key][i].update(val)
 
         for group_key, states in grouped_states.items():
-            yield tuple(list(group_key) + [s.finalize() for s in states])
+            yield tuple(list(group_key) + [s.finalize() for s in states]), None, None
 
     def get_output_schema(self) -> Schema:
         return self.output_schema
@@ -323,11 +366,11 @@ class NestedLoopJoin(Operator):
         if self._right_rows is None:
             self._right_rows = list(self.right.next())
 
-        for left_row in self.left.next():
-            for right_row in self._right_rows:
+        for left_row, _, _ in self.left.next():
+            for right_row, _, _ in self._right_rows:
                 combined_row = left_row + right_row
                 if self.predicate(combined_row):
-                    yield combined_row
+                    yield combined_row, None, None
 
     def get_output_schema(self) -> Schema:
         return self.left.get_output_schema() + self.right.get_output_schema()

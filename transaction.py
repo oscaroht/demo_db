@@ -26,6 +26,8 @@ class Transaction:
         self.freed_page_ids = []
         self._has_terminated = False
 
+        self.shadow_page_map: dict[int, int] = {}
+
     def get_table_by_name(self, name: str) -> Table | ShadowTable:
         table: None | ShadowTable = self.shadow_tables.get(name.lower())
         if table: return table
@@ -43,7 +45,21 @@ class Transaction:
         if shadow_table_or_none is None:
             raise ValidationError(f"Table with name {table_name} no longer exists.")
         return shadow_table_or_none
-    
+
+
+    def copy_on_write(self, shadow_table, page_id: int) -> ShadowPage:
+        if page_id in self.shadow_page_map:
+            shadow_page_id = self.shadow_page_map[page_id]
+            shadow_page = self.buffer_manager.get_page(shadow_page_id)
+            if isinstance(shadow_page, Page):
+                raise Exception("This is not a shadow page")
+            return shadow_page
+        shadow_page = self._get_existing_page_for_write(shadow_table, page_id)
+        self.shadow_page_map[page_id] = shadow_page.page_id
+        return shadow_page
+        
+        
+
     def prepare_shadow_table_for_write(self, shadow_table: ShadowTable):
         if not shadow_table.table_name in self.shadow_tables:
             raise Exception("Shadow table not yet geristered")
@@ -82,11 +98,11 @@ class Transaction:
         self.shadow_tables[table.table_name] = None  # remove the referenced
 
     def get_page_generator_from_table_by_name(self, name):
-        table = self.get_table_by_name(name)
+        table: ShadowTable | Table = self.get_table_by_name(name)
         yield from self.buffer_manager.get_pages(table.page_id)
 
 
-    def _get_existing_page_for_write(self, shadow_table: ShadowTable, old_pid):
+    def _get_existing_page_for_write(self, shadow_table: ShadowTable, old_pid) -> ShadowPage:
         """
         Creates a shadow page (copy) of the original page. Swaps the orignal page for the shadow page
         Returns the shadow page.
@@ -96,6 +112,8 @@ class Transaction:
         # get new page_id for the shadow
         if isinstance(original_page, ShadowPage):
             return original_page
+        if shadow_table.table_name not in self.shadow_tables:
+            raise Exception("Shadow table has not yet been registered")
 
         shadow_pid: int = self._get_free_page_id()
         # copy the data so we start with the same state. Add is_dirty to write to disk if buffer is full
@@ -116,7 +134,7 @@ class Transaction:
         Allocates a brand new 'orphan' page for a table.
         """
         if shadow_table.table_name not in self.shadow_tables:
-            raise Exception("Table is not a shadow table")
+            raise Exception("Shadow table has not yet been registered")
         # get new page_id
         new_pid = self._get_free_page_id()
         # create the blank page
