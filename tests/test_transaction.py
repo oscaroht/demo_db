@@ -49,7 +49,7 @@ def test_get_new_page_creates_shadow_table(transaction):
 
 def test_copy_on_write_logic(transaction, mock_buffer_manager):
     """Test that writing to an existing page creates a copy (Shadow Paging)."""
-    original = Table("users", [], [], [1])
+    original = Table("users", [], [], (1,))
     transaction.catalog.get_table_by_name.return_value = original
     
     # Action: Request existing page for write

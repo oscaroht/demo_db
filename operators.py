@@ -2,7 +2,7 @@ import abc
 from typing import Callable, Generator, List, Any, Literal, Optional
 from functools import cmp_to_key
 from dataclasses import dataclass
-from catalog import Table, Catalog, Page
+from catalog import ShadowTable, Table, Catalog, Page
 from syntax_tree import Literal
 
 from schema import ColumnIdentifier, Schema
@@ -62,7 +62,7 @@ class ScanOperator(Operator):
         return f"{indent}* TableScan (Source: {self.table_name})"
 
 class Insert(Operator):
-    def __init__(self, table: Table, data_generator: Generator, column_indices: list[int], transaction):
+    def __init__(self, table: ShadowTable, data_generator: Generator, column_indices: list[int], transaction):
         self.shadow_table = table
         self.transaction: Transaction = transaction
         self.transaction.prepare_shadow_table_for_write(self.shadow_table)

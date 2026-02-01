@@ -1,8 +1,8 @@
 from collections import OrderedDict
-from typing import List, Generator
+from typing import Iterable, List, Generator
 
 from diskmanager import DiskManager
-from catalog import Page
+from catalog import Page, ShadowPage
 
 class BufferManager:
 
@@ -11,7 +11,7 @@ class BufferManager:
         self.capacity = capacity
         self.diskmanager = diskmanager
     
-    def get_pages(self, page_ids: List[int]):
+    def get_pages(self, page_ids: Iterable[int]):
         """If multiple pages are needed then first yield the pages that are in the buffer. Only afterwards read from disk.
         Otherwise pages might be evicted from the cache that are needed for the same query."""
         needed_from_disk = []
@@ -23,7 +23,7 @@ class BufferManager:
         for disk_page_info in needed_from_disk:
             yield self.get_page(disk_page_info)
 
-    def get_page(self, page_id: int) -> Page:
+    def get_page(self, page_id: int) -> Page | ShadowPage:
         """Retrieve a page from cache or disk"""
         if page_id not in self.buffer:
             page = self.diskmanager.read_page(page_id)
@@ -32,7 +32,7 @@ class BufferManager:
         self.buffer.move_to_end(page_id)
         return self.buffer[page_id]
 
-    def put(self, page: Page) -> None:
+    def put(self, page: Page | ShadowPage) -> None:
         self.buffer[page.page_id] = page
         self.buffer.move_to_end(page.page_id)
         if len(self.buffer) > self.capacity:

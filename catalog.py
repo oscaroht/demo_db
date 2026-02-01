@@ -2,7 +2,7 @@ import abc
 from collections import namedtuple
 from dataclasses import dataclass, field
 import pickle
-from typing import Iterable, List, Type, Any
+from typing import Iterable, List, Type, Any, Tuple
 
 from config import PAGE_SIZE
 
@@ -22,34 +22,13 @@ class PageHeader(ctypes.BigEndianStructure):
 
 HEADER_SIZE = ctypes.sizeof(PageHeader)
 
-class Page:
-    def __init__(self, page_id, data: Any, header=None, is_dirty=True):  # data is list[Row] or Catalog
+class BasePage:
+    def __init__(self, page_id, data: list[Row] | tuple[Row], header=None, is_dirty=True):  # data is list[Row] or Catalog
         self.page_id = page_id
         self.data = data
         self.header: None | PageHeader = header
         self.is_dirty = is_dirty
         self.bytes_length = HEADER_SIZE
-    
-    def has_space_for(self, row: Any) -> bool:
-        """Check if adding this row would exceed PAGE_SIZE."""
-        # recalculating this bytes size by serializing the page and returning the result is inefficient
-        # better would be to only calculate the new data. However, I do not think bytelen(data + [row])
-        # is equal to bytelength(data) + bytelength(row). Better would be to not use native types 
-        # and let everything be a bytes. For now this is find.
-        new_data_state = self.data + [row]
-        projected_size = len(pickle.dumps(new_data_state))
-        return (HEADER_SIZE + projected_size) <= PAGE_SIZE
-
-    def add_row(self, row: Any) -> bool:
-        """
-        Attempts to add a row. Returns True if successful, 
-        False if the page is full.
-        """
-        if self.has_space_for(row):
-            self.data.append(row)
-            self.is_dirty = True
-            return True
-        return False
     
     @classmethod
     def from_bytes(cls, page_id: int, raw_data: bytes):
@@ -75,15 +54,75 @@ class Page:
         padding = b'\x00' * (PAGE_SIZE - len(page_data))
         return page_data + padding
 
-@dataclass
-class Table:
+class ShadowPage(BasePage):
+    """Mutable page"""
+    def __init__(self, page_id, data: list[Row], header=None, is_dirty=True):  # data is list[Row] or Catalog
+        self.page_id = page_id
+        self.data = list(data)
+        self.header: None | PageHeader = header
+        self.is_dirty = is_dirty
+
+    def has_space_for(self, row: Any) -> bool:
+        """Check if adding this row would exceed PAGE_SIZE."""
+        # recalculating this bytes size by serializing the page and returning the result is inefficient
+        # better would be to only calculate the new data. However, I do not think bytelen(data + [row])
+        # is equal to bytelength(data) + bytelength(row). Better would be to not use native types 
+        # and let everything be a bytes. For now this is find.
+        new_data_state = self.data + [row]
+        projected_size = len(pickle.dumps(new_data_state))
+        return (HEADER_SIZE + projected_size) <= PAGE_SIZE
+
+    def add_row(self, row: Any) -> bool:
+        """
+        Attempts to add a row. Returns True if successful, 
+        False if the page is full.
+        """
+        if self.has_space_for(row):
+            self.data.append(row)
+            self.is_dirty = True
+            return True
+        return False
+
+class Page(BasePage):
+    """Immutable page"""
+    def __init__(self, page_id, data: tuple[Row, ...], header=None, is_dirty=True):  # data is list[Row] or Catalog
+        self.page_id = page_id
+        self.data = data  # it is now a tuple such that it is immutable
+        self.header: None | PageHeader = header
+        self.is_dirty = is_dirty
+
+    @classmethod
+    def from_shadow_page(cls, shadow_page: ShadowPage):
+        return cls(shadow_page.page_id, tuple(shadow_page.data), shadow_page.header, shadow_page.is_dirty)
+
+    def to_shadow_page(self, shadow_page_id: int) -> ShadowPage:
+        return ShadowPage(shadow_page_id, list(self.data), self.header, self.is_dirty)
+
+
+@dataclass(frozen=False)
+class ShadowTable:
+    """Mutable table used in a transaction. Changes are persisted by transformation to a Table on commit, or dereferenced on rollback"""
     table_name: str
     column_names: List[str]
     column_datatypes: List[Type]
     page_id: List[int] = field(default_factory=list)
 
-    def deepcopy(self):
-        return Table(table_name=self.table_name, column_names=self.column_names, column_datatypes=self.column_datatypes, page_id=self.page_id.copy())
+
+@dataclass(frozen=True)
+class Table:
+    """Immutable table used in the catalog. It is read only such that the data is never altered during a transaction. On commit
+    the ShadowTable is tranmsformed to a Table and the reference is swaped.
+    """
+    table_name: str
+    column_names: List[str]
+    column_datatypes: List[Type]
+    page_id: tuple[int, ...] = field(default_factory=tuple)
+
+    def to_shadow_table(self):
+        return ShadowTable(table_name=self.table_name, column_names=self.column_names, column_datatypes=self.column_datatypes, page_id=list(self.page_id))
+
+def from_shadow_table(shadow_table: ShadowTable):
+    return Table(shadow_table.table_name, shadow_table.column_names, shadow_table.column_datatypes, tuple(shadow_table.page_id))
 
 
 class Catalog:
@@ -110,7 +149,7 @@ class Catalog:
             j += 1
         return free_page_ids
 
-    def get_table_by_name(self, name: str):
+    def get_table_by_name(self, name: str) -> Table:
         table = self.tables.get(name.lower())
         if table is None:
             raise Exception("Table not found")
@@ -121,7 +160,7 @@ class Catalog:
         self.free_page_ids += table.page_id  # take the table's pages and add them to the free list for reassignment later
         del self.tables[table.table_name]  # remove from dict
 
-    def get_all_page_ids(self, table_name) -> list[int]:
+    def get_all_page_ids(self, table_name) -> Iterable[int]:
         return self.tables[table_name.lower()].page_id
 
     def get_free_page_id(self, transaction_id: int) -> int:
