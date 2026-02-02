@@ -1,3 +1,8 @@
+import sys
+required = (3, 11)
+if not sys.version_info >= required:
+    print(f"Requires Python {required[0]}.{required[1]} or higher.")
+    exit(1)
 import buffermanager
 from catalog import Catalog, Table, Page
 import catalog
