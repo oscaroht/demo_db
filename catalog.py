@@ -21,14 +21,15 @@ class PageHeader(ctypes.BigEndianStructure):
     ]
 
 HEADER_SIZE = ctypes.sizeof(PageHeader)
+# how much does an extra row cost? Subtract the base cost from the cost of a row extra
+PICKLE_OVERHEAD = len(pickle.dumps( (0,)  )) - (len(pickle.dumps( [(0,), (1,)] )) - len(pickle.dumps( [(2,)] )) )  # 11
 
 class BasePage:
-    def __init__(self, page_id, data: list[Row] | tuple[Row], header=None, is_dirty=True):  # data is list[Row] or Catalog
+    def __init__(self, page_id, data: list[Row] | tuple[Row], header: None | PageHeader = None, is_dirty=True):  # data is list[Row] or Catalog
         self.page_id = page_id
         self.data = data
-        self.header: None | PageHeader = header
+        self.header = header
         self.is_dirty = is_dirty
-        self.bytes_length = HEADER_SIZE
     
     @classmethod
     def from_bytes(cls, page_id: int, raw_data: bytes):
@@ -44,6 +45,8 @@ class BasePage:
     def to_bytes(self) -> bytes:
         pickled_rows = pickle.dumps(self.data)
         data_length = len(pickled_rows)
+        print(f"DATA: {self.data}")
+        print(f"LENGTH: {data_length}")
         
         if data_length > (PAGE_SIZE - HEADER_SIZE):
             raise MemoryError("Page overflow! Too many rows for one page.")
@@ -56,52 +59,61 @@ class BasePage:
 
 class ShadowPage(BasePage):
     """Mutable page"""
+
+    MAX_FILL_RATE = 0.90
+
     def __init__(self, page_id, data: list[Row], header=None, is_dirty=True):  # data is list[Row] or Catalog
         self.page_id = page_id
         self.data = list(data)
-        self.header: None | PageHeader = header
+        self.estimate_data_length = header.data_length if header else PICKLE_OVERHEAD
         self.is_dirty = is_dirty
 
-    def has_space_for(self, row: Any) -> bool:
+    def get_size(self) -> int:
         """Check if adding this row would exceed PAGE_SIZE."""
         # recalculating this bytes size by serializing the page and returning the result is inefficient
         # better would be to only calculate the new data. However, I do not think bytelen(data + [row])
         # is equal to bytelength(data) + bytelength(row). Better would be to not use native types 
         # and let everything be a bytes. For now this is find.
-        new_data_state = self.data + [row]
-        projected_size = len(pickle.dumps(new_data_state))
-        return (HEADER_SIZE + projected_size) <= PAGE_SIZE
+        return len(pickle.dumps(self.data)) + HEADER_SIZE
 
     def add_row(self, row: Any) -> bool:
         """
         Attempts to add a row. Returns True if successful, 
         False if the page is full.
         """
-        if self.has_space_for(row):
+        extra_data = len(pickle.dumps(row)) - PICKLE_OVERHEAD + 1
+
+        if (HEADER_SIZE + self.estimate_data_length + extra_data) / PAGE_SIZE < self.MAX_FILL_RATE:
             self.data.append(row)
             self.is_dirty = True
+            self.estimate_data_length += extra_data
+            print(f"ESTIMATED SIZE {self.estimate_data_length}")
+            print(f"ACTUAL SIZE {len(pickle.dumps(self.data))}")
             return True
         return False
 
     def delete_rows(self, indices_to_remove: list[int]):
         """Use reversed order sort to remove from end to begin"""
         for index in sorted(indices_to_remove, reverse=True):
+            self.estimate_data_length -= len(pickle.dumps(self.data[index])) - PICKLE_OVERHEAD
             del self.data[index]
 
 class Page(BasePage):
     """Immutable page"""
-    def __init__(self, page_id, data: tuple[Row, ...], header=None, is_dirty=True):  # data is list[Row] or Catalog
+    def __init__(self, page_id, data: tuple[Row, ...], header: None | PageHeader = None, is_dirty=True):  # data is list[Row] or Catalog
         self.page_id = page_id
         self.data = data  # it is now a tuple such that it is immutable
-        self.header: None | PageHeader = header
+        self.header = header
         self.is_dirty = is_dirty
 
     @classmethod
     def from_shadow_page(cls, shadow_page: ShadowPage):
-        return cls(shadow_page.page_id, tuple(shadow_page.data), shadow_page.header, shadow_page.is_dirty)
+        header = PageHeader(shadow_page.page_id, shadow_page.header.data_length)
+        return cls(shadow_page.page_id, tuple(shadow_page.data), header, shadow_page.is_dirty)
 
     def to_shadow_page(self, shadow_page_id: int) -> ShadowPage:
-        return ShadowPage(shadow_page_id, list(self.data), self.header, self.is_dirty)
+        header = PageHeader(shadow_page_id, self.header.data_length)
+        return ShadowPage(shadow_page_id, list(self.data), header, self.is_dirty)
 
 
 @dataclass(frozen=False)

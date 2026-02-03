@@ -81,11 +81,13 @@ class Insert(Operator):
         for raw_val_tuple in self.data_generator():
             new_row = self._prepare_row(raw_val_tuple)
             page: Page | ShadowPage = self.transaction.buffer_manager.get_page(self.shadow_table.page_id[-1])
+            print(f"GET PAGE {page.page_id}")
             if isinstance(page, Page):
                 raise Exception("Page object not writable")
             page_is_full = not page.add_row(new_row)
             if page_is_full:
                 page = self.transaction.get_new_page(self.shadow_table)
+                print(f"PAGE IS FULL NEW PAGE {page.page_id}")
                 page_is_full = not page.add_row(new_row)
                 if page_is_full:
                     raise Exception("Page size is to small for even 1 row!")

@@ -42,5 +42,6 @@ class BufferManager:
 
     def flush(self):
         for _, page in self.buffer.items():
-            if page.is_dirty:
+            if page.is_dirty or isinstance(page, ShadowPage):  # actually only shadow pages can be dirty and I guess every shadow page is dirty otherwise there is not point in making a shadow page
+                print(f"FLUSHING PAGE {page.page_id}")
                 self.diskmanager.write_page(page)

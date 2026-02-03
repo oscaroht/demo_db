@@ -1,6 +1,6 @@
 import os
 from config import PAGE_SIZE
-from catalog import Catalog, Page
+from catalog import Catalog, Page, ShadowPage
 
 class DiskManager:
     def __init__(self, db_path: str):
@@ -18,7 +18,7 @@ class DiskManager:
             f.seek(offset)
             return Page.from_bytes(page_id, f.read(PAGE_SIZE))
 
-    def write_page(self, page: Page):
+    def write_page(self, page: ShadowPage):
         data = page.to_bytes()
         if len(data) != PAGE_SIZE:
             raise ValueError("Data must be exactly PAGE_SIZE")
